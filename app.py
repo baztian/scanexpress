@@ -1,4 +1,5 @@
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -32,7 +33,7 @@ def _read_positive_int_env(name: str, default_value: int) -> int:
     return parsed_value
 
 
-def _build_scan_command() -> list[str]:
+def _build_scan_command(batch_output_pattern: Path) -> list[str]:
     configured_command = os.getenv("SCANEXPRESS_SCAN_COMMAND")
     if configured_command and configured_command.strip() != "":
         command = shlex.split(configured_command)
@@ -43,24 +44,24 @@ def _build_scan_command() -> list[str]:
     if scanner_device:
         command.extend(["-d", scanner_device])
     command.append("--format=tiff")
+    command.append(f"--batch={batch_output_pattern}")
     return command
 
 
-def _run_scan_command(output_tiff_path: Path) -> None:
-    command = _build_scan_command()
+def _run_scan_command(batch_output_pattern: Path) -> list[Path]:
+    command = _build_scan_command(batch_output_pattern)
     scan_timeout_seconds = _read_positive_int_env(
         "SCANEXPRESS_SCAN_TIMEOUT_SECONDS", 60
     )
 
     try:
-        with output_tiff_path.open("wb") as output_file:
-            result = subprocess.run(
-                command,
-                stdout=output_file,
-                stderr=subprocess.PIPE,
-                timeout=scan_timeout_seconds,
-                check=False,
-            )
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=scan_timeout_seconds,
+            check=False,
+        )
     except FileNotFoundError as exc:
         raise RuntimeError(
             "Scan command not found. Configure SCANEXPRESS_SCAN_COMMAND or install scanimage."
@@ -76,29 +77,55 @@ def _run_scan_command(output_tiff_path: Path) -> None:
             stderr_message = "scanner command exited with a non-zero status"
         raise RuntimeError(f"Scanner command failed: {stderr_message}")
 
-    if not output_tiff_path.exists() or output_tiff_path.stat().st_size == 0:
+    batch_stem = batch_output_pattern.stem.replace("%d", "")
+    output_tiff_paths = list(batch_output_pattern.parent.glob(f"{batch_stem}*.tiff"))
+
+    def _extract_batch_index(path: Path) -> int:
+        match = re.search(r"(\d+)(?=\.tiff$)", path.name)
+        if match is None:
+            return -1
+        return int(match.group(1))
+
+    output_tiff_paths = sorted(output_tiff_paths, key=lambda path: (_extract_batch_index(path), path.name))
+    if not output_tiff_paths:
         raise RuntimeError("Scanner produced no TIFF output.")
 
+    empty_output_files = [
+        output_tiff_path.name
+        for output_tiff_path in output_tiff_paths
+        if output_tiff_path.stat().st_size == 0
+    ]
+    if empty_output_files:
+        empty_files_summary = ", ".join(empty_output_files[:5])
+        if len(empty_output_files) > 5:
+            empty_files_summary = f"{empty_files_summary}, ..."
+        raise RuntimeError(
+            f"Scanner produced empty TIFF output file(s): {empty_files_summary}."
+        )
 
-def _convert_tiff_to_pdf(input_tiff_path: Path, output_pdf_path: Path) -> int:
+    return output_tiff_paths
+
+
+def _convert_tiffs_to_pdf(input_tiff_paths: list[Path], output_pdf_path: Path) -> int:
     if Image is None:
         raise RuntimeError(
             "PIL is not installed. Install Pillow via pip or install python3-pil and run with system site-packages."
         )
 
     try:
-        with Image.open(input_tiff_path) as image:
-            frame_count = getattr(image, "n_frames", 1)
-            converted_frames = []
-            for frame_index in range(frame_count):
-                image.seek(frame_index)
-                converted_frames.append(image.convert("RGB"))
+        converted_frames = []
+        for input_tiff_path in input_tiff_paths:
+            with Image.open(input_tiff_path) as image:
+                frame_count = getattr(image, "n_frames", 1)
+                for frame_index in range(frame_count):
+                    image.seek(frame_index)
+                    converted_frames.append(image.convert("RGB"))
     except FileNotFoundError as exc:
-        raise RuntimeError("TIFF file not found for PDF conversion.") from exc
+        raise RuntimeError("A TIFF file is missing for PDF conversion.") from exc
     except UnidentifiedImageError as exc:
-        raise RuntimeError("Scanner output is not a valid TIFF image.") from exc
+        raise RuntimeError("Scanner output contains an invalid TIFF image.") from exc
     except OSError as exc:
-        raise RuntimeError(f"Failed to read TIFF output: {exc}") from exc
+        raise RuntimeError(f"Failed to read TIFF outputs: {exc}") from exc
 
     if not converted_frames:
         raise RuntimeError("TIFF output contains no pages.")
@@ -180,11 +207,11 @@ def trigger_scan():
     try:
         with tempfile.TemporaryDirectory(prefix="scanexpress-") as working_dir:
             working_dir_path = Path(working_dir)
-            tiff_path = working_dir_path / "scan_output.tiff"
+            batch_output_pattern = working_dir_path / "scan_output%d.tiff"
             pdf_path = working_dir_path / "scan_output.pdf"
 
-            _run_scan_command(tiff_path)
-            page_count = _convert_tiff_to_pdf(tiff_path, pdf_path)
+            tiff_paths = _run_scan_command(batch_output_pattern)
+            page_count = _convert_tiffs_to_pdf(tiff_paths, pdf_path)
             paperless_response = _upload_pdf_to_paperless(pdf_path)
 
         document_id = paperless_response.get("id")

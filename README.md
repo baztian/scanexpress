@@ -87,13 +87,13 @@ Quick validation:
 
 `POST /api/scan` now performs this pipeline:
 
-1. Execute scanner command (expects TIFF on stdout)
-2. Convert TIFF pages to a single PDF
+1. Execute scanner command using batch TIFF output (`--batch=/tmp/.../scan_output%d.tiff`)
+2. Convert all generated TIFF pages/files to a single PDF
 3. Upload PDF to Paperless-ngx `/api/documents/post_document/`
 
 Configure with environment variables:
 
-- `SCANEXPRESS_SCAN_COMMAND` (optional): scanner command (binary path or command prefix) to run instead of `scanimage`. Backend appends `-d <device>` (when configured) and `--format=tiff` so wrappers should keep a scanimage-compatible interface and forward args.
+- `SCANEXPRESS_SCAN_COMMAND` (optional): scanner command (binary path or command prefix) to run instead of `scanimage`. Backend appends `-d <device>` (when configured), `--format=tiff`, and `--batch=<tempdir>/scan_output%d.tiff`, so wrappers should keep a scanimage-compatible interface and forward args.
 - `SCANEXPRESS_SCANNER_DEVICE` (optional): scanner device name used by default scan command (or by wrapper script).
 - `SCANEXPRESS_SCAN_TIMEOUT_SECONDS` (optional, default `60`): timeout for scanner command.
 - `SCANEXPRESS_PAPERLESS_BASE_URL` (required for upload): e.g. `https://paperless.example.com`.
