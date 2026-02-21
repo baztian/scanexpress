@@ -56,6 +56,7 @@ Guidance for AI coding agents working in `scanexpress`.
 
 - Update `README.md` for any new setup steps, env vars, or behavior changes.
 - Keep `docs/ARCHITECTURE.md` aligned when changing flow or major components.
+- For command/script examples in Markdown docs, use 4-space-indented blocks; do not use triple-backtick fenced code blocks.
 
 ## Safe Defaults
 

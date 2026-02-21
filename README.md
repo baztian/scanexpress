@@ -17,6 +17,56 @@ ScanExpress is a planned web app for triggering scanner jobs (for example a Brot
     python app.py
     # open http://localhost:8000
 
+## Server Installation
+
+Use this section for one-time server setup. Use the development guide for iterative update workflows.
+
+Prerequisites:
+
+- Server has scanner drivers/tools installed and can run `scanimage`.
+- Python 3 with venv support is available.
+
+One-time app install:
+
+    sudo mkdir -p /opt/scanexpress
+    sudo chown "$USER":"$USER" /opt/scanexpress
+    git clone <your-repo-url> /opt/scanexpress
+    cd /opt/scanexpress
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+
+Create environment file `/etc/default/scanexpress`:
+
+    SCANEXPRESS_SCAN_COMMAND=/opt/scanexpress/scripts/scan_wrapper.sh
+    SCANEXPRESS_SCANNER_DEVICE=BrotherADS2200:libusb:001:014
+    SCANEXPRESS_SCAN_TIMEOUT_SECONDS=60
+
+    SCANEXPRESS_PAPERLESS_BASE_URL=https://paperless.example.com
+    SCANEXPRESS_PAPERLESS_API_TOKEN=replace-with-real-token
+    SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS=60
+
+Set environment file permissions:
+
+    sudo touch /etc/default/scanexpress
+    sudo chown root:scanexpress /etc/default/scanexpress
+    sudo chmod 640 /etc/default/scanexpress
+
+Install service from `scanexpress.service.template`:
+
+    sudo useradd --system --create-home --home /var/lib/scanexpress --shell /usr/sbin/nologin scanexpress || true
+    sudo cp /opt/scanexpress/scanexpress.service.template /etc/systemd/system/scanexpress.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now scanexpress
+    sudo systemctl status scanexpress --no-pager
+
+On distros that prefer `/etc/sysconfig`, change `EnvironmentFile` in the service unit accordingly.
+
+Quick validation:
+
+    curl -sS -X POST http://127.0.0.1:8000/api/scan | jq .
+    sudo journalctl -u scanexpress -n 80 --no-pager
+
 ## Backend Scan + Upload Configuration
 
 `POST /api/scan` now performs this pipeline:
@@ -64,6 +114,10 @@ Optional modes:
 
     npm run test:e2e:headed
     npm run test:e2e:ui
+
+## Deployment Development Loop
+
+For iterative desktop -> deployment server testing with real scanner hardware and real Paperless-ngx, including both `git` and `rsync` update workflows, see the [development docs](docs/DEVELOPMENT.md).
 
 ## License
 
