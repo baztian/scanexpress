@@ -1,4 +1,53 @@
 const { test, expect } = require("@playwright/test");
+const http = require("http");
+const { promises: fs } = require("fs");
+
+const modeFilePath = process.env.SCANEXPRESS_FAKE_SCAN_MODE_FILE;
+
+if (!modeFilePath) {
+  throw new Error("SCANEXPRESS_FAKE_SCAN_MODE_FILE must be set for e2e tests.");
+}
+
+let fakePaperlessServer;
+
+test.beforeAll(async () => {
+  fakePaperlessServer = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === "/api/documents/post_document/") {
+      req.on("data", () => {});
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ id: 4242 }));
+      });
+      return;
+    }
+
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ detail: "not found" }));
+  });
+
+  await new Promise((resolve, reject) => {
+    fakePaperlessServer.once("error", reject);
+    fakePaperlessServer.listen(18089, "127.0.0.1", resolve);
+  });
+});
+
+test.afterAll(async () => {
+  if (!fakePaperlessServer) return;
+
+  await new Promise((resolve, reject) => {
+    fakePaperlessServer.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+});
+
+test.beforeEach(async () => {
+  await fs.writeFile(modeFilePath, "success", "utf-8");
+});
 
 test("loads page with idle state", async ({ page }) => {
   await page.goto("/");
@@ -8,31 +57,18 @@ test("loads page with idle state", async ({ page }) => {
   await expect(page.locator("#statusText")).toHaveText("Status: idle");
 });
 
-test("clicking Start Scan shows not_implemented backend response", async ({ page }) => {
+test("clicking Start Scan runs backend with fake scanner and fake Paperless", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Start Scan" }).click();
 
-  await expect(page.locator("#statusText")).toHaveText(
-    "Status: not_implemented (Scan trigger will be implemented next.)",
-  );
+  await expect(page.locator("#statusText")).toHaveText(/^Status: ok \(.+\)$/);
 });
 
-test("shows mocked success response", async ({ page }) => {
-  await page.route("**/api/scan", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        status: "ok",
-        message: "Mock scan completed",
-      }),
-    });
-  });
+test("clicking Start Scan surfaces backend error when fake scanner fails", async ({ page }) => {
+  await fs.writeFile(modeFilePath, "fail", "utf-8");
 
   await page.goto("/");
   await page.getByRole("button", { name: "Start Scan" }).click();
 
-  await expect(page.locator("#statusText")).toHaveText(
-    "Status: ok (Mock scan completed)",
-  );
+  await expect(page.locator("#statusText")).toHaveText(/^Status: error \(.+\)$/);
 });
