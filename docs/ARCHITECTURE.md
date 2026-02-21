@@ -14,3 +14,4 @@
 - Scanner model should be configurable (not hardcoded).
 - Credentials and endpoints should come from environment variables.
 - API and frontend are kept in one project for simplicity.
+- Playwright smoke tests (`tests/e2e/smoke.spec.js`) validate the UI/API contract against the local Flask server.

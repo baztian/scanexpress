@@ -17,6 +17,22 @@ ScanExpress is a planned web app for triggering scanner jobs (for example a Brot
     python app.py
     # open http://localhost:8000
 
+## Playwright Smoke Tests
+
+Install Node dependencies and Playwright browser binaries:
+
+    npm install
+    npx playwright install
+
+Run the smoke suite (auto-starts Flask via `python app.py`):
+
+    npm run test:e2e
+
+Optional modes:
+
+    npm run test:e2e:headed
+    npm run test:e2e:ui
+
 ## License
 
 MIT (see [LICENSE](LICENSE)).

@@ -49,6 +49,7 @@ Guidance for AI coding agents working in `scanexpress`.
   1. App starts: `python app.py`
   2. `/` loads and button click updates status text
   3. `/api/scan` behavior matches expected status code/payload
+- For UI or `/api/scan` contract changes, also run `npm run test:e2e`.
 - If tests are added, keep them focused and lightweight (do not introduce heavy frameworks without request).
 
 ## Documentation Rules
