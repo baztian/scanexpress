@@ -57,6 +57,12 @@ On production server:
     sudo systemctl restart scanexpress
     sudo journalctl -u scanexpress -n 80 --no-pager
 
+If you mix rsync and later run `git pull` in the same tree, clean first:
+
+    git reset --hard HEAD
+    git clean -fd
+    git pull --ff-only
+
 ## systemd Service Notes
 
 Template file: `scanexpress.service.template`.

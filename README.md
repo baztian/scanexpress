@@ -17,6 +17,10 @@ ScanExpress is a planned web app for triggering scanner jobs (for example a Brot
     python app.py
     # open http://localhost:8000
 
+To test the full `/api/scan` flow locally (TIFF→PDF conversion), also install Pillow:
+
+    pip install "Pillow>=10.3,<13.0"
+
 ## Server Installation
 
 Use this section for one-time server setup. Use the development guide for iterative update workflows.
@@ -40,27 +44,41 @@ One-time app install:
     cd /opt/scanexpress
     python3 -m venv --system-site-packages .venv
     source .venv/bin/activate
-    pip install -r requirements.txt --no-deps
+    pip install -r requirements.txt
 
-Create environment file `/etc/default/scanexpress`:
+Note: with `--system-site-packages`, `pip` may warn about unrelated global package conflicts.
+
+Optional (isolated venv, no global packages):
+
+    pip install -r requirements.txt "Pillow>=10.3,<13.0"
+
+Create service account and group:
+
+    sudo groupadd --system scanexpress
+    sudo useradd --system --gid scanexpress --create-home --home /var/lib/scanexpress --shell /usr/sbin/nologin scanexpress
+
+Create environment file `/etc/default/scanexpress` and set permissions:
+
+    sudo touch /etc/default/scanexpress
+    sudo chown root:scanexpress /etc/default/scanexpress
+    sudo chmod 640 /etc/default/scanexpress
+
+Edit `/etc/default/scanexpress`:
+
+    sudoedit /etc/default/scanexpress
+
+Add:
 
     SCANEXPRESS_SCAN_COMMAND=/opt/scanexpress/scripts/scan_wrapper.sh
-    SCANEXPRESS_SCANNER_DEVICE=BrotherADS2200:libusb:001:014
+    SCANEXPRESS_SCANNER_DEVICE=BrotherADS2200:libusb:001:002
     SCANEXPRESS_SCAN_TIMEOUT_SECONDS=60
 
     SCANEXPRESS_PAPERLESS_BASE_URL=https://paperless.example.com
     SCANEXPRESS_PAPERLESS_API_TOKEN=replace-with-real-token
     SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS=60
 
-Set environment file permissions:
-
-    sudo touch /etc/default/scanexpress
-    sudo chown root:scanexpress /etc/default/scanexpress
-    sudo chmod 640 /etc/default/scanexpress
-
 Install service from `scanexpress.service.template`:
 
-    sudo useradd --system --create-home --home /var/lib/scanexpress --shell /usr/sbin/nologin scanexpress || true
     sudo cp /opt/scanexpress/scanexpress.service.template /etc/systemd/system/scanexpress.service
     sudo systemctl daemon-reload
     sudo systemctl enable --now scanexpress
@@ -70,7 +88,7 @@ On distros that prefer `/etc/sysconfig`, change `EnvironmentFile` in the service
 
 Quick validation:
 
-    curl -sS -X POST http://127.0.0.1:8000/api/scan | jq .
+    curl -sS -X POST http://127.0.0.1:8000/api/scan
     sudo journalctl -u scanexpress -n 80 --no-pager
 
 ## Backend Scan + Upload Configuration
