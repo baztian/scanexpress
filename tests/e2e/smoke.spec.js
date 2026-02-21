@@ -72,3 +72,12 @@ test("clicking Start Scan surfaces backend error when fake scanner fails", async
 
   await expect(page.locator("#statusText")).toHaveText(/^Status: error \(.+\)$/);
 });
+
+test("clicking Start Scan preserves multipage TIFF as multipage PDF", async ({ page }) => {
+  await fs.writeFile(modeFilePath, "adf", "utf-8");
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start Scan" }).click();
+
+  await expect(page.locator("#statusText")).toHaveText(/Status: ok \(.+pages=3.+\)/);
+});

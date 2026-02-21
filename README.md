@@ -9,17 +9,9 @@ ScanExpress is a planned web app for triggering scanner jobs (for example a Brot
 - Target integration: Scanner hardware via host device (Raspberry Pi or equivalent)
 - Output destination: Paperless-ngx
 
-## Quick Start
+## Development and Testing
 
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install -r requirements.txt
-    python app.py
-    # open http://localhost:8000
-
-To test the full `/api/scan` flow locally (TIFF→PDF conversion), also install Pillow:
-
-    pip install "Pillow>=10.3,<13.0"
+For local development setup, Playwright e2e smoke tests, and iterative deployment workflows, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Server Installation
 
@@ -115,33 +107,6 @@ Example wrapper configuration:
     export SCANEXPRESS_PAPERLESS_BASE_URL="https://paperless.cloud.zonny.de:43443"
     export SCANEXPRESS_PAPERLESS_API_TOKEN="<mysecrettoken>"
     python app.py
-
-## Playwright Smoke Tests
-
-Install Node dependencies and Playwright browser binaries:
-
-    npm install
-    npx playwright install
-
-Run the smoke suite (auto-starts Flask via `python app.py`):
-
-    npm run test:e2e
-
-### E2E strategy for scanner + Paperless
-
-- E2E smoke tests start the real Flask app and call the real `/api/scan` backend endpoint.
-- Hardware is not used in tests: Playwright config sets `SCANEXPRESS_SCAN_COMMAND` to `scripts/fake_scan_wrapper.py`.
-- Paperless network dependency is not used in tests: `tests/e2e/smoke.spec.js` starts a local fake Paperless HTTP server on `127.0.0.1:18089`.
-- Scanner behavior is controlled per test by writing `success` or `fail` to `/tmp/scanexpress-fake-scan-mode.txt`.
-
-Optional modes:
-
-    npm run test:e2e:headed
-    npm run test:e2e:ui
-
-## Deployment Development Loop
-
-For iterative desktop -> deployment server testing with real scanner hardware and real Paperless-ngx, including both `git` and `rsync` update workflows, see the [development docs](docs/DEVELOPMENT.md).
 
 ## License
 

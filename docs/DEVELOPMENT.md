@@ -4,6 +4,42 @@ This guide describes a simple iterative workflow when developing on a desktop PC
 
 For one-time server installation and service bootstrap, see the "Server Installation" section in `README.md`.
 
+## Local Development Quick Start
+
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    python app.py
+
+Open `http://localhost:8000`.
+
+To test the full `/api/scan` flow locally (TIFF→PDF conversion), also install Pillow:
+
+    pip install "Pillow>=10.3,<13.0"
+
+## Playwright Smoke Tests
+
+Install Node dependencies and Playwright browser binaries:
+
+    npm install
+    npx playwright install
+
+Run the smoke suite (auto-starts Flask via `python app.py`):
+
+    npm run test:e2e
+
+Optional modes:
+
+    npm run test:e2e:headed
+    npm run test:e2e:ui
+
+### E2E strategy for scanner + Paperless
+
+- E2E smoke tests start the real Flask app and call the real `/api/scan` backend endpoint.
+- Hardware is not used in tests: Playwright config sets `SCANEXPRESS_SCAN_COMMAND` to `scripts/fake_scan_wrapper.py`.
+- Paperless network dependency is not used in tests: `tests/e2e/smoke.spec.js` starts a local fake Paperless HTTP server on `127.0.0.1:18089`.
+- Scanner behavior is controlled per test by writing `success`, `adf`, or `fail` to `/tmp/scanexpress-fake-scan-mode.txt`.
+
 ## Recommended Iteration Stages
 
 1. Desktop checks (fast): run local app + e2e smoke tests.

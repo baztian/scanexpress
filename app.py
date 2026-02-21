@@ -8,10 +8,9 @@ import requests
 from flask import Flask, jsonify, render_template
 
 try:
-    from PIL import Image, ImageSequence, UnidentifiedImageError
+    from PIL import Image, UnidentifiedImageError
 except ImportError:
     Image = None
-    ImageSequence = None
     UnidentifiedImageError = OSError
 
 app = Flask(__name__)
@@ -81,17 +80,19 @@ def _run_scan_command(output_tiff_path: Path) -> None:
         raise RuntimeError("Scanner produced no TIFF output.")
 
 
-def _convert_tiff_to_pdf(input_tiff_path: Path, output_pdf_path: Path) -> None:
-    if Image is None or ImageSequence is None:
+def _convert_tiff_to_pdf(input_tiff_path: Path, output_pdf_path: Path) -> int:
+    if Image is None:
         raise RuntimeError(
             "PIL is not installed. Install Pillow via pip or install python3-pil and run with system site-packages."
         )
 
     try:
         with Image.open(input_tiff_path) as image:
-            converted_frames = [
-                frame.convert("RGB") for frame in ImageSequence.Iterator(image)
-            ]
+            frame_count = getattr(image, "n_frames", 1)
+            converted_frames = []
+            for frame_index in range(frame_count):
+                image.seek(frame_index)
+                converted_frames.append(image.convert("RGB"))
     except FileNotFoundError as exc:
         raise RuntimeError("TIFF file not found for PDF conversion.") from exc
     except UnidentifiedImageError as exc:
@@ -115,6 +116,8 @@ def _convert_tiff_to_pdf(input_tiff_path: Path, output_pdf_path: Path) -> None:
 
     if not output_pdf_path.exists() or output_pdf_path.stat().st_size == 0:
         raise RuntimeError("Generated PDF is empty.")
+
+    return len(converted_frames)
 
 
 def _build_paperless_upload_url() -> str:
@@ -181,11 +184,11 @@ def trigger_scan():
             pdf_path = working_dir_path / "scan_output.pdf"
 
             _run_scan_command(tiff_path)
-            _convert_tiff_to_pdf(tiff_path, pdf_path)
+            page_count = _convert_tiff_to_pdf(tiff_path, pdf_path)
             paperless_response = _upload_pdf_to_paperless(pdf_path)
 
         document_id = paperless_response.get("id")
-        message = "Scan uploaded to Paperless-ngx."
+        message = f"Scan uploaded to Paperless-ngx. pages={page_count}"
         if document_id is not None:
             message = f"{message} document_id={document_id}"
 
@@ -195,6 +198,7 @@ def trigger_scan():
                     "status": "ok",
                     "message": message,
                     "document_id": document_id,
+                    "page_count": page_count,
                 }
             ),
             200,

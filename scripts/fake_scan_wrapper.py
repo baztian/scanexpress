@@ -29,6 +29,21 @@ def main() -> int:
     if mode == "empty":
         return 0
 
+    if mode == "adf":
+        first_page = Image.new("RGB", (16, 16), "white")
+        second_page = Image.new("RGB", (16, 16), "lightgray")
+        third_page = Image.new("RGB", (16, 16), "silver")
+        output_buffer = io.BytesIO()
+        first_page.save(
+            output_buffer,
+            format="TIFF",
+            save_all=True,
+            append_images=[second_page, third_page],
+        )
+        sys.stdout.buffer.write(output_buffer.getvalue())
+        sys.stdout.buffer.flush()
+        return 0
+
     image = Image.new("RGB", (16, 16), "white")
     output_buffer = io.BytesIO()
     image.save(output_buffer, format="TIFF")
