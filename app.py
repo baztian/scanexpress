@@ -6,7 +6,13 @@ from pathlib import Path
 
 import requests
 from flask import Flask, jsonify, render_template
-from PIL import Image, ImageSequence, UnidentifiedImageError
+
+try:
+    from PIL import Image, ImageSequence, UnidentifiedImageError
+except ImportError:
+    Image = None
+    ImageSequence = None
+    UnidentifiedImageError = OSError
 
 app = Flask(__name__)
 
@@ -76,6 +82,11 @@ def _run_scan_command(output_tiff_path: Path) -> None:
 
 
 def _convert_tiff_to_pdf(input_tiff_path: Path, output_pdf_path: Path) -> None:
+    if Image is None or ImageSequence is None:
+        raise RuntimeError(
+            "PIL is not installed. Install Pillow via pip or install python3-pil and run with system site-packages."
+        )
+
     try:
         with Image.open(input_tiff_path) as image:
             converted_frames = [

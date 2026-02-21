@@ -25,16 +25,22 @@ Prerequisites:
 
 - Server has scanner drivers/tools installed and can run `scanimage`.
 - Python 3 with venv support is available.
+- `python3-pil` package is installed on the server.
+
+Install required system packages:
+
+    sudo apt update
+    sudo apt install -y python3-venv python3-pil
 
 One-time app install:
 
     sudo mkdir -p /opt/scanexpress
     sudo chown "$USER":"$USER" /opt/scanexpress
-    git clone <your-repo-url> /opt/scanexpress
+    git clone https://github.com/baztian/scanexpress /opt/scanexpress
     cd /opt/scanexpress
-    python3 -m venv .venv
+    python3 -m venv --system-site-packages .venv
     source .venv/bin/activate
-    pip install -r requirements.txt
+    pip install -r requirements.txt --no-deps
 
 Create environment file `/etc/default/scanexpress`:
 
