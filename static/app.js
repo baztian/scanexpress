@@ -7,8 +7,18 @@ async function triggerScan() {
 
   try {
     const response = await fetch("/api/scan", { method: "POST" });
-    const payload = await response.json();
-    statusText.textContent = `Status: ${payload.status} (${payload.message})`;
+    let payload;
+
+    try {
+      payload = await response.json();
+    } catch (error) {
+      statusText.textContent = "Status: invalid backend response";
+      return;
+    }
+
+    const status = payload?.status ?? "unknown";
+    const message = payload?.message ?? "No message provided";
+    statusText.textContent = `Status: ${status} (${message})`;
   } catch (error) {
     statusText.textContent = "Status: error contacting backend";
   }
