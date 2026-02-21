@@ -43,6 +43,11 @@ def _write_batch_outputs(batch_pattern: str, pages: list[bytes]) -> None:
         page_path.write_bytes(page_bytes)
 
 
+def _emit_progress(message: str) -> None:
+    sys.stderr.write(f"{message}\n")
+    sys.stderr.flush()
+
+
 def main() -> int:
     mode = _read_mode()
     batch_pattern = _read_batch_pattern()
@@ -52,6 +57,7 @@ def main() -> int:
         return 2
 
     if mode == "empty":
+        _emit_progress("Batch terminated, 0 pages scanned")
         return 0
 
     if mode == "adf":
@@ -60,6 +66,14 @@ def main() -> int:
             _build_tiff_bytes("lightgray"),
             _build_tiff_bytes("silver"),
         ]
+        _emit_progress("Scanning infinity pages, incrementing by 1, numbering from 1")
+        for index in range(1, len(pages) + 1):
+            _emit_progress(f"Scanning page {index}")
+            _emit_progress(f"Scanned page {index}. (scanner status = 5)")
+        _emit_progress(f"Scanning page {len(pages) + 1}")
+        _emit_progress("scanimage: sane_start: Document feeder out of documents")
+        _emit_progress(f"Batch terminated, {len(pages)} pages scanned")
+
         if batch_pattern:
             _write_batch_outputs(batch_pattern, pages)
             return 0
@@ -74,6 +88,9 @@ def main() -> int:
         return 0
 
     single_page = _build_tiff_bytes("white")
+    _emit_progress("Scanning page 1")
+    _emit_progress("Scanned page 1. (scanner status = 5)")
+    _emit_progress("Batch terminated, 1 pages scanned")
     if batch_pattern:
         _write_batch_outputs(batch_pattern, [single_page])
         return 0

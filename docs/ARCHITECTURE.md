@@ -3,11 +3,16 @@
 ## Intended Flow
 
 1. User opens the Flask-served web page and clicks the scan button.
-2. Frontend JavaScript sends a request to the Flask API endpoint.
+2. Frontend JavaScript sends a request to the Flask progress-stream endpoint.
 3. Flask backend executes configured scanner command/wrapper (`scanimage` compatible) with batch output (`--batch=.../scan_output%d.tiff`).
 4. Backend converts all generated TIFF output files/pages to a PDF.
 5. Backend uploads PDF to Paperless-ngx (`/api/documents/post_document/`).
 6. Flask API returns success/failure status for the UI.
+
+### API Notes
+
+- `POST /api/scan`: synchronous JSON response (compatible with scripts and curl).
+- `POST /api/scan/stream`: streaming NDJSON progress updates for live UI status during scanning.
 
 ## Notes
 

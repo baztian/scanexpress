@@ -63,11 +63,11 @@ Add:
 
     SCANEXPRESS_SCAN_COMMAND=/opt/scanexpress/scripts/scan_wrapper.sh
     SCANEXPRESS_SCANNER_DEVICE=BrotherADS2200:libusb:001:002
-    SCANEXPRESS_SCAN_TIMEOUT_SECONDS=60
+    SCANEXPRESS_SCAN_TIMEOUT_SECONDS=30
 
     SCANEXPRESS_PAPERLESS_BASE_URL=https://paperless.example.com
     SCANEXPRESS_PAPERLESS_API_TOKEN=replace-with-real-token
-    SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS=60
+    SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS=5
 
 Install service from `scanexpress.service.template`:
 
@@ -91,14 +91,16 @@ Quick validation:
 2. Convert all generated TIFF pages/files to a single PDF
 3. Upload PDF to Paperless-ngx `/api/documents/post_document/`
 
+For live UI progress updates, the frontend uses `POST /api/scan/stream` (NDJSON stream) and updates status as scan pages complete.
+
 Configure with environment variables:
 
 - `SCANEXPRESS_SCAN_COMMAND` (optional): scanner command (binary path or command prefix) to run instead of `scanimage`. Backend appends `-d <device>` (when configured), `--format=tiff`, and `--batch=<tempdir>/scan_output%d.tiff`, so wrappers should keep a scanimage-compatible interface and forward args.
 - `SCANEXPRESS_SCANNER_DEVICE` (optional): scanner device name used by default scan command (or by wrapper script).
-- `SCANEXPRESS_SCAN_TIMEOUT_SECONDS` (optional, default `60`): timeout for scanner command.
+- `SCANEXPRESS_SCAN_TIMEOUT_SECONDS` (optional, default `30`): timeout per page progress event while scanning (if no page progress arrives within this window, scanning fails).
 - `SCANEXPRESS_PAPERLESS_BASE_URL` (required for upload): e.g. `https://paperless.example.com`.
 - `SCANEXPRESS_PAPERLESS_API_TOKEN` (required for upload): Paperless token used as `Authorization: Token ...`.
-- `SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS` (optional, default `60`): timeout for Paperless upload request.
+- `SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS` (optional, default `5`): timeout per scanned page for Paperless upload request. Backend adds a small internal overhead to this computed total timeout.
 
 Example wrapper configuration:
 

@@ -73,5 +73,6 @@ When integration work starts, standardize on names like:
 - `SCANEXPRESS_PAPERLESS_BASE_URL`
 - `SCANEXPRESS_PAPERLESS_API_TOKEN`
 - `SCANEXPRESS_SCAN_TIMEOUT_SECONDS`
+- `SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS`
 
 (Only document/add what is actually implemented.)

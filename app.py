@@ -1,12 +1,17 @@
+import json
 import os
 import re
+import select
 import shlex
 import subprocess
 import tempfile
+import threading
+import time
+from queue import Queue
 from pathlib import Path
 
 import requests
-from flask import Flask, jsonify, render_template
+from flask import Flask, Response, jsonify, render_template, stream_with_context
 
 try:
     from PIL import Image, UnidentifiedImageError
@@ -48,31 +53,108 @@ def _build_scan_command(batch_output_pattern: Path) -> list[str]:
     return command
 
 
-def _run_scan_command(batch_output_pattern: Path) -> list[Path]:
+def _parse_scan_progress_line(raw_line: str) -> dict | None:
+    line = raw_line.strip()
+    if line == "":
+        return None
+
+    scanning_page_match = re.search(r"Scanning page\s+(\d+)", line, re.IGNORECASE)
+    if scanning_page_match:
+        page_number = int(scanning_page_match.group(1))
+        return {
+            "status": "scanning",
+            "message": f"Scanning page {page_number}",
+            "page_count": max(page_number - 1, 0),
+        }
+
+    scanned_page_match = re.search(r"Scanned page\s+(\d+)", line, re.IGNORECASE)
+    if scanned_page_match:
+        page_number = int(scanned_page_match.group(1))
+        return {
+            "status": "scanning",
+            "message": f"Scanned page {page_number}",
+            "page_count": page_number,
+        }
+
+    batch_terminated_match = re.search(
+        r"Batch terminated,\s*(\d+)\s*pages scanned", line, re.IGNORECASE
+    )
+    if batch_terminated_match:
+        page_count = int(batch_terminated_match.group(1))
+        return {
+            "status": "scanning",
+            "message": f"Batch terminated, {page_count} pages scanned",
+            "page_count": page_count,
+        }
+
+    return {
+        "status": "scanning",
+        "message": line,
+    }
+
+
+def _run_scan_command(
+    batch_output_pattern: Path, progress_callback=None
+) -> list[Path]:
     command = _build_scan_command(batch_output_pattern)
-    scan_timeout_seconds = _read_positive_int_env(
-        "SCANEXPRESS_SCAN_TIMEOUT_SECONDS", 60
+    scan_timeout_seconds_per_page = _read_positive_int_env(
+        "SCANEXPRESS_SCAN_TIMEOUT_SECONDS", 30
     )
 
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
-            timeout=scan_timeout_seconds,
-            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
             "Scan command not found. Configure SCANEXPRESS_SCAN_COMMAND or install scanimage."
         ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"Scan command timed out after {scan_timeout_seconds} seconds."
-        ) from exc
 
-    if result.returncode != 0:
-        stderr_message = result.stderr.decode("utf-8", errors="replace").strip()
+    if process.stderr is None:
+        process.kill()
+        raise RuntimeError("Failed to capture scanner progress output.")
+
+    stderr_messages = []
+    last_page_progress_at = time.monotonic()
+    while True:
+        ready_streams, _, _ = select.select(
+            [process.stderr], [], [], 1
+        )
+        if not ready_streams:
+            if time.monotonic() - last_page_progress_at > scan_timeout_seconds_per_page:
+                process.kill()
+                process.wait()
+                raise RuntimeError(
+                    f"Scan command timed out after {scan_timeout_seconds_per_page} seconds without page progress."
+                )
+            continue
+
+        line = process.stderr.readline()
+        if line == "":
+            if process.poll() is not None:
+                break
+            continue
+
+        stripped_line = line.strip()
+        if stripped_line != "":
+            stderr_messages.append(stripped_line)
+
+        if progress_callback is not None:
+            progress_update = _parse_scan_progress_line(line)
+            if progress_update is not None:
+                progress_callback(progress_update)
+                if "page_count" in progress_update:
+                    last_page_progress_at = time.monotonic()
+
+    return_code = process.wait()
+    if return_code != 0:
+        stderr_message = "\n".join(stderr_messages[-3:]).strip()
         if not stderr_message:
             stderr_message = "scanner command exited with a non-zero status"
         raise RuntimeError(f"Scanner command failed: {stderr_message}")
@@ -154,15 +236,23 @@ def _build_paperless_upload_url() -> str:
     return f"{base_url}/api/documents/post_document/"
 
 
-def _upload_pdf_to_paperless(pdf_path: Path) -> dict:
+def _calculate_paperless_timeout_seconds(page_count: int) -> int:
+    timeout_per_page_seconds = _read_positive_int_env(
+        "SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS", 5
+    )
+    internal_overhead_seconds = 10
+    return internal_overhead_seconds + (
+        timeout_per_page_seconds * max(page_count, 1)
+    )
+
+
+def _upload_pdf_to_paperless(pdf_path: Path, page_count: int) -> dict:
     api_token = os.getenv("SCANEXPRESS_PAPERLESS_API_TOKEN", "").strip()
     if not api_token:
         raise RuntimeError("SCANEXPRESS_PAPERLESS_API_TOKEN is not configured.")
 
     upload_url = _build_paperless_upload_url()
-    upload_timeout_seconds = _read_positive_int_env(
-        "SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS", 60
-    )
+    upload_timeout_seconds = _calculate_paperless_timeout_seconds(page_count)
 
     headers = {"Authorization": f"Token {api_token}"}
 
@@ -197,6 +287,51 @@ def _upload_pdf_to_paperless(pdf_path: Path) -> dict:
     return {}
 
 
+def _process_scan(progress_callback=None) -> dict:
+    with tempfile.TemporaryDirectory(prefix="scanexpress-") as working_dir:
+        working_dir_path = Path(working_dir)
+        batch_output_pattern = working_dir_path / "scan_output%d.tiff"
+        pdf_path = working_dir_path / "scan_output.pdf"
+
+        if progress_callback is not None:
+            progress_callback({"status": "scanning", "message": "Starting scan..."})
+
+        tiff_paths = _run_scan_command(batch_output_pattern, progress_callback)
+
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "status": "processing",
+                    "message": f"Converting {len(tiff_paths)} TIFF file(s) to PDF...",
+                }
+            )
+
+        page_count = _convert_tiffs_to_pdf(tiff_paths, pdf_path)
+
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "status": "uploading",
+                    "message": f"Uploading {page_count} page(s) to Paperless-ngx...",
+                    "page_count": page_count,
+                }
+            )
+
+        paperless_response = _upload_pdf_to_paperless(pdf_path, page_count)
+
+    document_id = paperless_response.get("id")
+    message = f"Scan uploaded to Paperless-ngx. pages={page_count}"
+    if document_id is not None:
+        message = f"{message} document_id={document_id}"
+
+    return {
+        "status": "ok",
+        "message": message,
+        "document_id": document_id,
+        "page_count": page_count,
+    }
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -205,31 +340,7 @@ def index():
 @app.post("/api/scan")
 def trigger_scan():
     try:
-        with tempfile.TemporaryDirectory(prefix="scanexpress-") as working_dir:
-            working_dir_path = Path(working_dir)
-            batch_output_pattern = working_dir_path / "scan_output%d.tiff"
-            pdf_path = working_dir_path / "scan_output.pdf"
-
-            tiff_paths = _run_scan_command(batch_output_pattern)
-            page_count = _convert_tiffs_to_pdf(tiff_paths, pdf_path)
-            paperless_response = _upload_pdf_to_paperless(pdf_path)
-
-        document_id = paperless_response.get("id")
-        message = f"Scan uploaded to Paperless-ngx. pages={page_count}"
-        if document_id is not None:
-            message = f"{message} document_id={document_id}"
-
-        return (
-            jsonify(
-                {
-                    "status": "ok",
-                    "message": message,
-                    "document_id": document_id,
-                    "page_count": page_count,
-                }
-            ),
-            200,
-        )
+        return jsonify(_process_scan()), 200
     except RuntimeError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 500
     except Exception:
@@ -243,6 +354,51 @@ def trigger_scan():
             ),
             500,
         )
+
+
+@app.post("/api/scan/stream")
+def trigger_scan_stream():
+    @stream_with_context
+    def stream_scan_updates():
+        updates_queue: Queue[dict | None] = Queue()
+
+        def send_progress(update: dict) -> None:
+            updates_queue.put(update)
+
+        def worker() -> None:
+            try:
+                result = _process_scan(send_progress)
+                updates_queue.put({**result, "complete": True})
+            except RuntimeError as exc:
+                updates_queue.put(
+                    {
+                        "status": "error",
+                        "message": str(exc),
+                        "complete": True,
+                    }
+                )
+            except Exception:
+                app.logger.exception("Unexpected error while processing /api/scan/stream")
+                updates_queue.put(
+                    {
+                        "status": "error",
+                        "message": "Unexpected backend error while processing scan.",
+                        "complete": True,
+                    }
+                )
+            finally:
+                updates_queue.put(None)
+
+        worker_thread = threading.Thread(target=worker, daemon=True)
+        worker_thread.start()
+
+        while True:
+            update = updates_queue.get()
+            if update is None:
+                break
+            yield f"{json.dumps(update)}\n"
+
+    return Response(stream_scan_updates(), mimetype="application/x-ndjson")
 
 
 if __name__ == "__main__":
