@@ -34,6 +34,7 @@ jobs:
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt
+          .venv/bin/pip install "Pillow>=10.3,<13.0"
 
       - name: Install Node dependencies
         run: npm ci
