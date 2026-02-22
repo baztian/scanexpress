@@ -57,6 +57,10 @@ Guidance for AI coding agents working in `scanexpress`.
 - Update `README.md` for any new setup steps, env vars, or behavior changes.
 - Keep `docs/ARCHITECTURE.md` aligned when changing flow or major components.
 - For command/script examples in Markdown docs, use 4-space-indented blocks; do not use triple-backtick fenced code blocks.
+- Always include blank lines before and after lists for readability.
+- Add blank lines before and after all headings (e.g., `## Heading` with blank line above and below).
+- Never use multiple consecutive blank lines; maximum one blank line between sections.
+- No trailing spaces at end of lines.
 
 ## Safe Defaults
 
