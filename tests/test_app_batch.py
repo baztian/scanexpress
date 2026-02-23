@@ -1,12 +1,45 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import app as scan_app
 
 
 class BatchScanCommandTests(unittest.TestCase):
+    def test_build_scan_command_adds_dynamic_scanimage_params(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_device_scanimage_params.return_value = {
+            "resolution": "300",
+            "mode": "Gray",
+            "contrast_adjustment": "10",
+            "source": "Black & White",
+        }
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            command = scan_app._build_scan_command(
+                Path("/tmp/scan_output%d.tiff"),
+                username="alice",
+                device_name="brother-bw",
+            )
+
+        self.assertIn("-d", command)
+        self.assertIn("BrotherADS2200:libusb:001:002", command)
+        self.assertIn("--resolution", command)
+        self.assertIn("300", command)
+        self.assertIn("--mode", command)
+        self.assertIn("Gray", command)
+        self.assertIn("--contrast-adjustment", command)
+        self.assertIn("10", command)
+        self.assertIn("--source", command)
+        self.assertIn("Black & White", command)
+        source_index = command.index("--source")
+        self.assertEqual(command[source_index + 1], "Black & White")
+        self.assertIn("--format=tiff", command)
+        self.assertIn("--batch=/tmp/scan_output%d.tiff", command)
+
     @patch("app.time.monotonic")
     @patch("app.select.select")
     @patch("app.subprocess.Popen")
@@ -78,20 +111,31 @@ class BatchScanCommandTests(unittest.TestCase):
         mock_popen.return_value = process
         mock_select.return_value = ([], [], [])
         mock_monotonic.side_effect = [0, 2]
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_device_scanimage_params.return_value = {}
+        fake_config_manager.get_device_scan_timeout_seconds.return_value = 1
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            with patch.dict("os.environ", {"SCANEXPRESS_SCAN_TIMEOUT_SECONDS": "1"}):
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
                 with self.assertRaises(RuntimeError) as context:
-                    scan_app._run_scan_command(temp_path / "scan_output%d.tiff")
+                    scan_app._run_scan_command(
+                        temp_path / "scan_output%d.tiff",
+                        username="alice",
+                        device_name="brother-bw",
+                    )
 
         self.assertIn("timed out", str(context.exception))
 
 
 class PaperlessTimeoutTests(unittest.TestCase):
     def test_calculate_paperless_timeout_uses_per_page_setting_with_overhead(self):
-        with patch.dict("os.environ", {"SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS": "4"}):
-            self.assertEqual(scan_app._calculate_paperless_timeout_seconds(3), 22)
+        fake_config_manager = Mock()
+        fake_config_manager.get_paperless_timeout_seconds.return_value = 4
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            self.assertEqual(scan_app._calculate_paperless_timeout_seconds(3, "alice"), 22)
 
 
 @unittest.skipIf(scan_app.Image is None, "Pillow is required for conversion tests")

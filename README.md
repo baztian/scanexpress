@@ -49,25 +49,15 @@ Create service account and group:
     sudo groupadd --system scanexpress
     sudo useradd --system --gid scanexpress --create-home --home /var/lib/scanexpress --shell /usr/sbin/nologin scanexpress
 
-Create environment file `/etc/default/scanexpress` and set permissions:
+Create config file from sample:
 
-    sudo touch /etc/default/scanexpress
-    sudo chown root:scanexpress /etc/default/scanexpress
-    sudo chmod 640 /etc/default/scanexpress
+    sudo cp /opt/scanexpress/scanexpress.sample.conf /etc/scanexpress.conf
+    sudo chown root:scanexpress /etc/scanexpress.conf
+    sudo chmod 640 /etc/scanexpress.conf
 
-Edit `/etc/default/scanexpress`:
+Edit `/etc/scanexpress.conf` and set `global.current_user`, `global.paperless_base_url`, real user tokens, and scanner device templates.
 
-    sudoedit /etc/default/scanexpress
-
-Add:
-
-    SCANEXPRESS_SCAN_COMMAND=/opt/scanexpress/scripts/scan_wrapper.sh
-    SCANEXPRESS_SCANNER_DEVICE=BrotherADS2200:libusb:001:002
-    SCANEXPRESS_SCAN_TIMEOUT_SECONDS=30
-
-    SCANEXPRESS_PAPERLESS_BASE_URL=https://paperless.example.com
-    SCANEXPRESS_PAPERLESS_API_TOKEN=replace-with-real-token
-    SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS=5
+Optional: if your config file is stored at a non-default path, set `SCANEXPRESS_CONFIG_FILE` in your service unit environment.
 
 Install service from `scanexpress.service.template`:
 
@@ -75,8 +65,6 @@ Install service from `scanexpress.service.template`:
     sudo systemctl daemon-reload
     sudo systemctl enable --now scanexpress
     sudo systemctl status scanexpress --no-pager
-
-On distros that prefer `/etc/sysconfig`, change `EnvironmentFile` in the service unit accordingly.
 
 Quick validation:
 
@@ -93,22 +81,29 @@ Quick validation:
 
 For live UI progress updates, the frontend uses `POST /api/scan/stream` (NDJSON stream) and updates status as scan pages complete.
 
-Configure with environment variables:
+Configuration resolution is **config-first with env fallback**:
 
-- `SCANEXPRESS_SCAN_COMMAND` (optional): scanner command (binary path or command prefix) to run instead of `scanimage`. Backend appends `-d <device>` (when configured), `--format=tiff`, and `--batch=<tempdir>/scan_output%d.tiff`, so wrappers should keep a scanimage-compatible interface and forward args.
-- `SCANEXPRESS_SCANNER_DEVICE` (optional): scanner device name used by default scan command (or by wrapper script).
-- `SCANEXPRESS_SCAN_TIMEOUT_SECONDS` (optional, default `30`): timeout per page progress event while scanning (if no page progress arrives within this window, scanning fails).
-- `SCANEXPRESS_PAPERLESS_BASE_URL` (required for upload): e.g. `https://paperless.example.com`.
-- `SCANEXPRESS_PAPERLESS_API_TOKEN` (required for upload): Paperless token used as `Authorization: Token ...`.
-- `SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS` (optional, default `5`): timeout per scanned page for Paperless upload request. Backend adds a small internal overhead to this computed total timeout.
+- `config.ini` user + device sections are primary source for token, scan command, device id, and per-device scan timeout.
+- `config.ini` `:scanimage-params` subsection is the preferred source for scanner command options; keys are passed through dynamically as CLI args.
+- `config.ini` `[global]` is primary source for `paperless_base_url`, `scan_timeout_seconds`, and `paperless_timeout_seconds`.
+- `config.ini` `[global]` also defines `current_user`.
 
-Example wrapper configuration:
+See full schema and examples in [docs/CONFIG_SPEC.md](docs/CONFIG_SPEC.md).
 
-    export SCANEXPRESS_SCAN_COMMAND="./scripts/scan_wrapper.sh"
-    export SCANEXPRESS_SCANNER_DEVICE="BrotherADS2200:libusb:001:014"
-    export SCANEXPRESS_PAPERLESS_BASE_URL="https://paperless.cloud.zonny.de:43443"
-    export SCANEXPRESS_PAPERLESS_API_TOKEN="<mysecrettoken>"
-    python app.py
+Environment variables:
+
+- `SCANEXPRESS_CONFIG_FILE` (optional): path to config file.
+
+Default config lookup order when `SCANEXPRESS_CONFIG_FILE` is not set:
+
+- `~/.config/scanexpress/scanexpress.conf`
+- `/etc/scanexpress.conf`
+
+Dynamic scanner args from config:
+
+- Preferred: define arbitrary scanner options in `[user:<username>:device:<device_name>:scanimage-params]`.
+- Each key/value is passed to scanner as `--<key> <value>` (underscores become dashes).
+- Compatibility fallback: when `:scanimage-params` is absent, extra non-reserved keys in `[user:<username>:device:<device_name>]` are also passed as scanner args.
 
 ## License
 

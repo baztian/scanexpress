@@ -17,6 +17,8 @@ To test the full `/api/scan` flow locally (TIFF→PDF conversion), also install 
 
     pip install "Pillow>=10.3,<13.0"
 
+Developer note: production default config path is `/etc/scanexpress.conf`. For local non-root development, use `SCANEXPRESS_CONFIG_FILE` to point to a writable test file (for example `tests/e2e/test_config.ini`).
+
 ## Playwright Smoke Tests
 
 Install Node dependencies and Playwright browser binaries:
@@ -36,7 +38,7 @@ Optional modes:
 ### E2E strategy for scanner + Paperless
 
 - E2E smoke tests start the real Flask app and call the real `/api/scan` backend endpoint.
-- Hardware is not used in tests: Playwright config sets `SCANEXPRESS_SCAN_COMMAND` to `scripts/fake_scan_wrapper.py`.
+- Hardware is not used in tests: Playwright config points `SCANEXPRESS_CONFIG_FILE` to `tests/e2e/test_config.ini`, which uses `scripts/fake_scan_wrapper.py` as device `scan_command`.
 - Paperless network dependency is not used in tests: `tests/e2e/smoke.spec.js` starts a local fake Paperless HTTP server on `127.0.0.1:18089`.
 - Scanner behavior is controlled per test by writing `success`, `adf`, or `fail` to `/tmp/scanexpress-fake-scan-mode.txt`.
 
@@ -107,7 +109,7 @@ Install/bootstrap steps are documented in `README.md`.
 
 ### If code path differs
 
-Edit unit values (`WorkingDirectory`, `ExecStart`, `EnvironmentFile`) in:
+Edit unit values (`WorkingDirectory`, `ExecStart`, optional `Environment`) in:
 
     sudo systemctl edit --full scanexpress
 

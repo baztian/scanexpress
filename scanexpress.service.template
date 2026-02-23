@@ -7,7 +7,8 @@ Type=simple
 User=scanexpress
 Group=scanexpress
 WorkingDirectory=/opt/scanexpress
-EnvironmentFile=/etc/default/scanexpress
+# Optional override when config.ini is not in the default location:
+# Environment="SCANEXPRESS_CONFIG_FILE=/etc/scanexpress.conf"
 ExecStart=/opt/scanexpress/.venv/bin/python /opt/scanexpress/app.py
 Restart=on-failure
 RestartSec=3

@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import select
 import shlex
@@ -12,6 +11,7 @@ from pathlib import Path
 
 import requests
 from flask import Flask, Response, jsonify, render_template, stream_with_context
+from config import ConfigManager
 
 try:
     from PIL import Image, UnidentifiedImageError
@@ -20,34 +20,45 @@ except ImportError:
     UnidentifiedImageError = OSError
 
 app = Flask(__name__)
+_CONFIG_MANAGER: ConfigManager | None = None
 
 
-def _read_positive_int_env(name: str, default_value: int) -> int:
-    raw_value = os.getenv(name)
-    if raw_value is None or raw_value.strip() == "":
-        return default_value
-
-    try:
-        parsed_value = int(raw_value)
-    except ValueError as exc:
-        raise RuntimeError(f"{name} must be an integer.") from exc
-
-    if parsed_value <= 0:
-        raise RuntimeError(f"{name} must be greater than zero.")
-
-    return parsed_value
+def get_config_manager() -> ConfigManager:
+    global _CONFIG_MANAGER
+    if _CONFIG_MANAGER is None:
+        _CONFIG_MANAGER = ConfigManager()
+    return _CONFIG_MANAGER
 
 
-def _build_scan_command(batch_output_pattern: Path) -> list[str]:
-    configured_command = os.getenv("SCANEXPRESS_SCAN_COMMAND")
+def _build_scan_command(
+    batch_output_pattern: Path, username: str | None = None, device_name: str | None = None
+) -> list[str]:
+    configured_command = None
+    scanner_device = None
+    scanimage_params: dict[str, str] = {}
+    if username is not None:
+        config_manager = get_config_manager()
+        configured_command = config_manager.get_user_scan_command(username, device_name)
+        scanner_device = config_manager.get_device_id(username, device_name)
+        scanimage_params = config_manager.get_device_scanimage_params(username, device_name)
+
     if configured_command and configured_command.strip() != "":
         command = shlex.split(configured_command)
     else:
         command = ["scanimage"]
 
-    scanner_device = os.getenv("SCANEXPRESS_SCANNER_DEVICE", "").strip()
     if scanner_device:
         command.extend(["-d", scanner_device])
+
+    for key in sorted(scanimage_params):
+        option_name = key.strip().replace("_", "-")
+        if not option_name:
+            continue
+
+        option_value = scanimage_params[key].strip()
+        command.append(f"--{option_name}")
+        command.append(option_value)
+
     command.append("--format=tiff")
     command.append(f"--batch={batch_output_pattern}")
     return command
@@ -94,12 +105,19 @@ def _parse_scan_progress_line(raw_line: str) -> dict | None:
 
 
 def _run_scan_command(
-    batch_output_pattern: Path, progress_callback=None
+    batch_output_pattern: Path,
+    progress_callback=None,
+    username: str | None = None,
+    device_name: str | None = None,
 ) -> list[Path]:
-    command = _build_scan_command(batch_output_pattern)
-    scan_timeout_seconds_per_page = _read_positive_int_env(
-        "SCANEXPRESS_SCAN_TIMEOUT_SECONDS", 30
-    )
+    command = _build_scan_command(batch_output_pattern, username, device_name)
+    scan_timeout_seconds_per_page = None
+    if username is not None:
+        scan_timeout_seconds_per_page = get_config_manager().get_device_scan_timeout_seconds(
+            username, device_name
+        )
+    if scan_timeout_seconds_per_page is None:
+        scan_timeout_seconds_per_page = 30
 
     try:
         process = subprocess.Popen(
@@ -113,7 +131,7 @@ def _run_scan_command(
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
-            "Scan command not found. Configure SCANEXPRESS_SCAN_COMMAND or install scanimage."
+            "Scan command not found. Configure scan_command in config.ini or install scanimage."
         ) from exc
 
     if process.stderr is None:
@@ -229,30 +247,35 @@ def _convert_tiffs_to_pdf(input_tiff_paths: list[Path], output_pdf_path: Path) -
     return len(converted_frames)
 
 
-def _build_paperless_upload_url() -> str:
-    base_url = os.getenv("SCANEXPRESS_PAPERLESS_BASE_URL", "").strip().rstrip("/")
+def _build_paperless_upload_url(username: str) -> str:
+    base_url = get_config_manager().get_paperless_base_url().strip().rstrip("/")
     if not base_url:
-        raise RuntimeError("SCANEXPRESS_PAPERLESS_BASE_URL is not configured.")
+        raise RuntimeError("global.paperless_base_url is not configured.")
     return f"{base_url}/api/documents/post_document/"
 
 
-def _calculate_paperless_timeout_seconds(page_count: int) -> int:
-    timeout_per_page_seconds = _read_positive_int_env(
-        "SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS", 5
-    )
+def _calculate_paperless_timeout_seconds(page_count: int, username: str | None = None) -> int:
+    timeout_per_page_seconds = None
+    if username is not None:
+        timeout_per_page_seconds = get_config_manager().get_paperless_timeout_seconds()
+    if timeout_per_page_seconds is None:
+        timeout_per_page_seconds = 5
     internal_overhead_seconds = 10
     return internal_overhead_seconds + (
         timeout_per_page_seconds * max(page_count, 1)
     )
 
 
-def _upload_pdf_to_paperless(pdf_path: Path, page_count: int) -> dict:
-    api_token = os.getenv("SCANEXPRESS_PAPERLESS_API_TOKEN", "").strip()
-    if not api_token:
-        raise RuntimeError("SCANEXPRESS_PAPERLESS_API_TOKEN is not configured.")
+def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | None = None) -> dict:
+    if username is None:
+        raise RuntimeError("username is required for Paperless upload.")
 
-    upload_url = _build_paperless_upload_url()
-    upload_timeout_seconds = _calculate_paperless_timeout_seconds(page_count)
+    api_token = get_config_manager().get_user_token(username)
+    if not api_token:
+        raise RuntimeError(f"No paperless API token configured for user '{username}' in config.ini.")
+
+    upload_url = _build_paperless_upload_url(username)
+    upload_timeout_seconds = _calculate_paperless_timeout_seconds(page_count, username)
 
     headers = {"Authorization": f"Token {api_token}"}
 
@@ -288,6 +311,10 @@ def _upload_pdf_to_paperless(pdf_path: Path, page_count: int) -> dict:
 
 
 def _process_scan(progress_callback=None) -> dict:
+    config_manager = get_config_manager()
+    username = config_manager.get_current_user()
+    device_name = config_manager.get_active_device_name(username)
+
     with tempfile.TemporaryDirectory(prefix="scanexpress-") as working_dir:
         working_dir_path = Path(working_dir)
         batch_output_pattern = working_dir_path / "scan_output%d.tiff"
@@ -296,7 +323,12 @@ def _process_scan(progress_callback=None) -> dict:
         if progress_callback is not None:
             progress_callback({"status": "scanning", "message": "Starting scan..."})
 
-        tiff_paths = _run_scan_command(batch_output_pattern, progress_callback)
+        tiff_paths = _run_scan_command(
+            batch_output_pattern,
+            progress_callback,
+            username,
+            device_name,
+        )
 
         if progress_callback is not None:
             progress_callback(
@@ -317,7 +349,7 @@ def _process_scan(progress_callback=None) -> dict:
                 }
             )
 
-        paperless_response = _upload_pdf_to_paperless(pdf_path, page_count)
+        paperless_response = _upload_pdf_to_paperless(pdf_path, page_count, username)
 
     document_id = paperless_response.get("id")
     message = f"Scan uploaded to Paperless-ngx. pages={page_count}"
@@ -329,6 +361,8 @@ def _process_scan(progress_callback=None) -> dict:
         "message": message,
         "document_id": document_id,
         "page_count": page_count,
+        "username": username,
+        "device_name": device_name,
     }
 
 

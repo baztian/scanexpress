@@ -16,9 +16,11 @@ ScanExpress uses Python's built-in `configparser` module to manage multi-user sc
 
 ## Configuration File Location
 
-- **Default:** `config.ini` in the app root directory
+- **Default lookup order:**
+    1. `~/.config/scanexpress/scanexpress.conf`
+    2. `/etc/scanexpress.conf`
 - **Can be overridden:** `SCANEXPRESS_CONFIG_FILE` environment variable
-- **Initial setup:** Copy `config.sample.ini` to `config.ini` and customize for your environment
+- **Initial setup:** Copy `scanexpress.sample.conf` to `/etc/scanexpress.conf` and customize for your environment
 
 ---
 
@@ -45,6 +47,8 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     device_id = BrotherADS2200:libusb:001:002
     scan_command = /opt/scanexpress/scripts/scan_wrapper.sh
     scan_timeout_seconds = 30
+
+    [user:alice:device:brother-color:scanimage-params]
     resolution = 300
     mode = 24 bit Color
 
@@ -52,6 +56,8 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     device_id = BrotherADS2200:libusb:001:002
     scan_command = /opt/scanexpress/scripts/scan_wrapper.sh
     scan_timeout_seconds = 30
+
+    [user:alice:device:brother-bw:scanimage-params]
     resolution = 200
     mode = Gray
 
@@ -59,15 +65,34 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     device_id = Canon:usb:123:456
     scan_command = /usr/bin/scanimage
     scan_timeout_seconds = 40
+
+    [user:bob:device:canon-default:scanimage-params]
     resolution = 150
     mode = 24 bit Color
 
 **Keys:**
 
 - `device_id` (required): Device identifier passed to scanner command via `-d` flag
-- `scan_command` (optional): Device-specific scan command. If not provided, uses `SCANEXPRESS_SCAN_COMMAND` env var
+- `scan_command` (optional): Device-specific scan command. If not provided, backend defaults to `scanimage`.
 - `scan_timeout_seconds` (optional): Timeout per page during scanning for this device (integer seconds)
-- Additional keys are arbitrary and passed as device-specific settings (reserved for future UI/API expansion)
+
+### Scanimage Parameters (Dynamic)
+
+Preferred location for scanner CLI options:
+
+`[user:<username>:device:<device_name>:scanimage-params]`
+
+All keys in this section are passed through dynamically as scan command args:
+
+- key `resolution = 300` -> `--resolution 300`
+- key `mode = Gray` -> `--mode Gray`
+- key `source = Automatic Document Feeder` -> `--source "Automatic Document Feeder"`
+- underscores are converted to dashes (example: `contrast_adjustment = 10` -> `--contrast-adjustment 10`)
+
+Fallback behavior:
+
+- If `:scanimage-params` section is missing, additional non-reserved keys from `[user:<username>:device:<device_name>]` are treated as scan command args.
+- Reserved keys in device section are not passed through as scanimage args: `device_id`, `scan_command`, `scan_timeout_seconds`.
 
 ---
 
@@ -89,6 +114,8 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     device_id = BrotherADS2200:libusb:001:002
     scan_command = /opt/scanexpress/scripts/scan_wrapper.sh
     scan_timeout_seconds = 30
+
+    [user:alice:device:brother-color:scanimage-params]
     resolution = 300
     mode = 24 bit Color
     brightness = 100
@@ -97,6 +124,8 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     device_id = BrotherADS2200:libusb:001:002
     scan_command = /opt/scanexpress/scripts/scan_wrapper.sh
     scan_timeout_seconds = 30
+
+    [user:alice:device:brother-bw:scanimage-params]
     resolution = 200
     mode = Gray
 
@@ -107,6 +136,8 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     device_id = Canon:usb:123:456
     scan_command = /usr/bin/scanimage
     scan_timeout_seconds = 40
+
+    [user:bob:device:canon-default:scanimage-params]
     resolution = 150
     mode = 24 bit Color
 
@@ -114,13 +145,11 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
 
 ## Environment Variables
 
-These settings remain in environment variables (not config file):
+Runtime settings are config-only.
 
-- `SCANEXPRESS_PAPERLESS_BASE_URL` (required): Base URL of Paperless-ngx instance (no trailing slash)
-- `SCANEXPRESS_PAPERLESS_API_TOKEN_FALLBACK` (optional): Fallback API token if user token not set in config
-- `SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS` (default: 5): Timeout per page during upload to Paperless-ngx
-- `SCANEXPRESS_SCAN_COMMAND` (default: `scanimage`): Default scan command if not specified in device config
-- `SCANEXPRESS_CURRENT_USER` (required in Phase 1): Username to use for scanning
+Only optional environment variable:
+
+- `SCANEXPRESS_CONFIG_FILE`: path override for `config.ini`.
 
 ---
 
@@ -166,7 +195,7 @@ When a scan is triggered, the caller can specify which device template to use:
 
 **Phase 1 (current):**
 
-- Use first available device for the user (or specified via env var `SCANEXPRESS_DEVICE_NAME`)
+- Use first available device for the configured user (`global.current_user`).
 
 **Phase 2 (future):**
 
@@ -177,20 +206,21 @@ When a scan is triggered, the caller can specify which device template to use:
 
 ## Sample Configuration File
 
-A `config.sample.ini` file is provided in the repository as a starting point.
+A `scanexpress.sample.conf` file is provided in the repository as a starting point.
 
 Setup steps:
 
-1. Copy `config.sample.ini` to `config.ini`
-2. Edit `config.ini`:
+1. Copy `scanexpress.sample.conf` to `/etc/scanexpress.conf`
+2. Edit `/etc/scanexpress.conf`:
 
+    - Set `[global] current_user`
+    - Set `[global] paperless_base_url`
    - Update user sections with actual Paperless API tokens
    - Add/modify device templates with your scanner settings
    - Set device_id values specific to your hardware
    - Adjust scan_timeout_seconds for each device if needed
 
-3. Set `SCANEXPRESS_CURRENT_USER` in `/etc/default/scanexpress`
-4. Start the app
+3. Start the app
 
 ---
 
@@ -198,34 +228,30 @@ Setup steps:
 
 On app startup:
 
-1. Load config.ini from configured location
+1. Load config file from configured location (default lookup order: `~/.config/scanexpress/scanexpress.conf`, then `/etc/scanexpress.conf`)
 2. Validate required keys exist:
 
-   - `[user:SCANEXPRESS_CURRENT_USER]` section must exist
+    - `[global]` section must contain `current_user`
+    - `[user:<global.current_user>]` section must exist
    - User section must have `paperless_api_token` key
 
-3. Validate env vars are set:
-
-   - `SCANEXPRESS_PAPERLESS_BASE_URL` must be configured
-   - `SCANEXPRESS_CURRENT_USER` must be set
-
-4. On missing/invalid config, return clear error message
+3. On missing/invalid config, return clear error message
 
 Example error:
 
-    ERROR: SCANEXPRESS_CURRENT_USER=alice but user 'alice' not found in config.ini.
+    ERROR: global.current_user=alice but user 'alice' not found in scanexpress.conf.
     Available users: bob, charlie
 
 ---
 
 ## File Permissions
 
-- `config.ini` should be readable by the service user
+- Config file should be readable by the service user
 - Restrict read permissions: `640` or `600` (contains secrets)
 - Ownership: `root:scanexpress` or similar
 
-    sudo chown root:scanexpress /etc/scanexpress/config.ini
-    sudo chmod 640 /etc/scanexpress/config.ini
+    sudo chown root:scanexpress /etc/scanexpress.conf
+    sudo chmod 640 /etc/scanexpress.conf
 
 ---
 
@@ -233,15 +259,14 @@ Example error:
 
 ### Manual Testing
 
-1. Copy `config.sample.ini` to test config:
+1. Copy `scanexpress.sample.conf` to test config:
 
-       cp config.sample.ini test_config.ini
+    cp scanexpress.sample.conf test_config.ini
 
 2. Edit `test_config.ini` with test user and device
 3. Start app with test config:
 
        export SCANEXPRESS_CONFIG_FILE=test_config.ini
-       export SCANEXPRESS_CURRENT_USER=testuser
        python app.py
 
 4. Verify config is loaded: check logs or add debug endpoint
@@ -258,36 +283,17 @@ Example error:
 ### Initial Setup
 
 1. Clone repo and install dependencies
-2. Copy `config.sample.ini` to `config.ini`
-3. Edit `config.ini` with actual users, tokens, and devices
-4. Set environment variables in service file or `/etc/default/scanexpress`
-5. Set file permissions on `config.ini`
-6. Start app
+2. Copy `scanexpress.sample.conf` to `/etc/scanexpress.conf`
+3. Edit `/etc/scanexpress.conf` with actual users, tokens, and devices
+4. Set file permissions on `/etc/scanexpress.conf`
+5. Start app
 
 ### Example Service File
 
     [Service]
-    Environment="SCANEXPRESS_CURRENT_USER=alice"
-    Environment="SCANEXPRESS_PAPERLESS_BASE_URL=https://paperless.example.com"
-    EnvironmentFile=/etc/default/scanexpress
+    # Optional only when config path is non-default:
+    # Environment="SCANEXPRESS_CONFIG_FILE=/etc/scanexpress.conf"
     ExecStart=/opt/scanexpress/.venv/bin/python /opt/scanexpress/app.py
-
-### Example `/etc/default/scanexpress`
-
-    # Configuration file location (optional)
-    # SCANEXPRESS_CONFIG_FILE=/etc/scanexpress/config.ini
-
-    # Required: Paperless-ngx base URL
-    SCANEXPRESS_PAPERLESS_BASE_URL=https://paperless.example.com
-
-    # Required in Phase 1: user to use for scanning
-    SCANEXPRESS_CURRENT_USER=alice
-
-    # Optional: default scan command (used if device doesn't specify one)
-    # SCANEXPRESS_SCAN_COMMAND=/opt/scanexpress/scripts/scan_wrapper.sh
-
-    # Optional: timeout per page during Paperless upload (default: 5 seconds)
-    # SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS=5
 
 ---
 
@@ -304,19 +310,12 @@ This design is extensible to a database backend:
 
 ---
 
-**Old:**
-
-    def _build_scan_command(batch_output_pattern: Path) -> list[str]:
-        configured_command = os.getenv("SCANEXPRESS_SCAN_COMMAND")
-        scanner_device = os.getenv("SCANEXPRESS_SCANNER_DEVICE", "").strip()
-
-**New:**
+**Runtime behavior:**
 
     def _build_scan_command(batch_output_pattern: Path, username: str) -> list[str]:
-        # Get from config; fall back to env vars for backwards compat
         config_manager = get_config_manager()
-        configured_command = config_manager.get_user_scan_command(username) or os.getenv(...)
-        scanner_device = config_manager.get_device_id(username) or os.getenv(...)
+        configured_command = config_manager.get_user_scan_command(username)
+        scanner_device = config_manager.get_device_id(username)
 
 ---
 
@@ -324,16 +323,7 @@ This design is extensible to a database backend:
 
 **Phase 1 (current):**
 
-- Single hardcoded user via environment variable
-- `SCANEXPRESS_CURRENT
-
-- Single hardcoded user via environment variable
-- `SCANEXPRESS_CURRENT_USER` env var (e.g., `alice`)
-- Or default to first user in config if env var not set
-
-Example `.venv/bin/activate` or `/etc/default/scanexpress`:
-
-    export SCANEXPRESS_CURRENT_USER=alice
+- Single configured user via `[global] current_user`.
 
 **Phase 2 (future):**
 
@@ -342,34 +332,11 @@ Example `.venv/bin/activate` or `/etc/default/scanexpress`:
 
 ---
 
-## Environment Variable Fallback (Migration Path)
-
-During transition, the config manager will **prefer config.ini but fall back to env vars**:
-    def get_global(self, key: str, fallback_env: str | None = None) -> str:
-        # 1. Try config.ini [global] section
-        # 2. If not found, try fallback env var
-        # 3. Return default or raise error
-
-**Fallback mappings:**
-
-**Fallback mappings:**
-
-- `global.paperless_base_url` → `SCANEXPRESS_PAPERLESS_BASE_URL`
-- `global.scan_timeout_seconds` → `SCANEXPRESS_SCAN_TIMEOUT_SECONDS`
-- `global.paperless_timeout_seconds` → `SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS`
-- `user:<username>.paperless_api_token` → `SCANEXPRESS_PAPERLESS_API_TOKEN`
-- `user:<username>.scan_command` → `SCANEXPRESS_SCAN_COMMAND`
-- `user:<username>:device:<device>.device_id` → `SCANEXPRESS_SCANNER_DEVICE`
-
-This allows a gradual migration: old deployments keep working, new ones use `config.ini`.
-
----
-
 ## API Contract (Frontend)
 
 Currently, the frontend calls `POST /api/scan` or `POST /api/scan/stream` without any user context.
 
-- Scan endpoint uses configured `SCANEXPRESS_CURRENT_USER`
+- Scan endpoint uses configured `[global] current_user`
 - Response includes `username` field (for logging/debugging)
 
 ## Documentation Updates

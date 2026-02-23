@@ -19,10 +19,8 @@ module.exports = defineConfig({
     reuseExistingServer: true,
     timeout: 60_000,
     env: {
-      SCANEXPRESS_SCAN_COMMAND: ".venv/bin/python scripts/fake_scan_wrapper.py",
+      SCANEXPRESS_CONFIG_FILE: "tests/e2e/test_config.ini",
       SCANEXPRESS_FAKE_SCAN_MODE_FILE: fakeScanModeFile,
-      SCANEXPRESS_PAPERLESS_BASE_URL: "http://127.0.0.1:18089",
-      SCANEXPRESS_PAPERLESS_API_TOKEN: "test-token",
     },
   },
 });

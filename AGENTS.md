@@ -24,7 +24,8 @@ Guidance for AI coding agents working in `scanexpress`.
 - Python:
   - Follow existing Flask style in `app.py`.
   - Keep functions small and explicit.
-  - Use environment variables for endpoints, credentials, device paths, and external integrations.
+  - Use `config.ini` as the runtime source of truth for endpoints, credentials, device paths, and scanner settings.
+  - Only use `SCANEXPRESS_CONFIG_FILE` environment variable when the config file path must be overridden.
   - Do not hardcode secrets or host-specific paths.
 - JavaScript:
   - Keep to vanilla JS (no framework additions unless explicitly requested).
@@ -39,11 +40,14 @@ Guidance for AI coding agents working in `scanexpress`.
 - Add timeouts and actionable error messages for scanner failures.
 - Validate file outputs before upload steps.
 - Paperless-ngx integration should:
-  - read base URL + auth from environment variables,
+  - read base URL + auth from `config.ini`,
   - fail safely with useful error responses,
   - avoid logging sensitive headers/tokens.
 
 ## Testing & Verification
+
+- Before running any project tests, activate the repository virtual environment first: `source .venv/bin/activate`.
+- Run test commands with the activated venv so project dependencies (Flask, requests, Pillow, Playwright tooling, etc.) resolve correctly.
 
 - Minimum checks after code changes:
   1. App starts: `python app.py`
@@ -70,13 +74,4 @@ Guidance for AI coding agents working in `scanexpress`.
 
 ## Suggested Environment Variables
 
-When integration work starts, standardize on names like:
-
-- `SCANEXPRESS_SCANNER_DEVICE`
-- `SCANEXPRESS_SCAN_OUTPUT_DIR`
-- `SCANEXPRESS_PAPERLESS_BASE_URL`
-- `SCANEXPRESS_PAPERLESS_API_TOKEN`
-- `SCANEXPRESS_SCAN_TIMEOUT_SECONDS`
-- `SCANEXPRESS_PAPERLESS_TIMEOUT_SECONDS`
-
-(Only document/add what is actually implemented.)
+- `SCANEXPRESS_CONFIG_FILE` (optional path override only)
