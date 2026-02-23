@@ -182,7 +182,7 @@ class ConfigManagerTests(unittest.TestCase):
 
         self.assertIn("user 'charlie' not found", str(context.exception))
 
-    def test_get_active_device_defaults_to_first_user_device(self):
+    def test_get_active_device_requires_default_device_when_devices_exist(self):
         config_path = self._write_config(
             """
             [global]
@@ -200,7 +200,67 @@ class ConfigManagerTests(unittest.TestCase):
         )
 
         manager = ConfigManager(config_path)
-        self.assertEqual(manager.get_active_device_name("alice"), "brother-bw")
+        with self.assertRaises(RuntimeError) as context:
+            manager.get_active_device_name("alice")
+
+        self.assertIn("default_device is required", str(context.exception))
+
+    def test_get_active_device_uses_user_default_device_when_configured(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = brother-color
+
+            [user:alice:device:brother-color]
+            device_id = scanner-1
+
+            [user:alice:device:brother-bw]
+            device_id = scanner-1
+            """
+        )
+
+        manager = ConfigManager(config_path)
+        self.assertEqual(manager.get_active_device_name("alice"), "brother-color")
+
+    def test_get_active_device_returns_none_when_no_devices_are_configured(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            """
+        )
+
+        manager = ConfigManager(config_path)
+        self.assertIsNone(manager.get_active_device_name("alice"))
+
+    def test_get_active_device_raises_for_invalid_default_device(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = missing-device
+
+            [user:alice:device:brother-color]
+            device_id = scanner-1
+            """
+        )
+
+        manager = ConfigManager(config_path)
+        with self.assertRaises(RuntimeError) as context:
+            manager.get_active_device_name("alice")
+
+        self.assertIn("default_device", str(context.exception))
+        self.assertIn("missing-device", str(context.exception))
 
     def test_get_device_scanimage_params_uses_dedicated_section_when_present(self):
         config_path = self._write_config(
@@ -263,6 +323,65 @@ class ConfigManagerTests(unittest.TestCase):
                 "source": "Automatic Document Feeder",
             },
         )
+
+    def test_get_device_scanimage_params_uses_user_default_scanimage_params_device(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = brother-color
+            default_scanimage_params_device = brother-bw
+
+            [user:alice:device:brother-color]
+            device_id = scanner-1
+
+            [user:alice:device:brother-color:scanimage-params]
+            resolution = 300
+            mode = 24 bit Color
+
+            [user:alice:device:brother-bw]
+            device_id = scanner-1
+
+            [user:alice:device:brother-bw:scanimage-params]
+            resolution = 200
+            mode = Gray
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(
+            manager.get_device_scanimage_params("alice"),
+            {
+                "mode": "Gray",
+                "resolution": "200",
+            },
+        )
+
+    def test_get_device_scanimage_params_raises_for_invalid_default_scanimage_params_device(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_scanimage_params_device = missing-profile
+
+            [user:alice:device:brother-color]
+            device_id = scanner-1
+            """
+        )
+
+        manager = ConfigManager(config_path)
+        with self.assertRaises(RuntimeError) as context:
+            manager.get_device_scanimage_params("alice")
+
+        self.assertIn("default_scanimage_params_device", str(context.exception))
+        self.assertIn("missing-profile", str(context.exception))
 
     def test_get_paperless_base_url_reads_global_config(self):
         config_path = self._write_config(

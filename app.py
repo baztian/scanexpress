@@ -30,6 +30,29 @@ def get_config_manager() -> ConfigManager:
     return _CONFIG_MANAGER
 
 
+def _resolve_libusb_device_id(scanner_device: str) -> str:
+    match = re.match(r"^(?P<prefix>(?:.*:)?libusb:)(?P<device_path>/dev/.+)$", scanner_device)
+    if match is None:
+        return scanner_device
+
+    device_path = match.group("device_path")
+    try:
+        resolved_path = Path(device_path).resolve(strict=True)
+    except OSError:
+        return scanner_device
+
+    usb_path_match = re.search(
+        r"/dev/bus/usb/(?P<bus>\d{3})/(?P<devnum>\d{3})$", resolved_path.as_posix()
+    )
+    if usb_path_match is None:
+        return scanner_device
+
+    return (
+        f"{match.group('prefix')}"
+        f"{usb_path_match.group('bus')}:{usb_path_match.group('devnum')}"
+    )
+
+
 def _build_scan_command(
     batch_output_pattern: Path, username: str | None = None, device_name: str | None = None
 ) -> list[str]:
@@ -48,7 +71,8 @@ def _build_scan_command(
         command = ["scanimage"]
 
     if scanner_device:
-        command.extend(["-d", scanner_device])
+        resolved_device_id = _resolve_libusb_device_id(scanner_device)
+        command.extend(["-d", resolved_device_id])
 
     for key in sorted(scanimage_params):
         option_name = key.strip().replace("_", "-")
@@ -62,6 +86,21 @@ def _build_scan_command(
     command.append("--format=tiff")
     command.append(f"--batch={batch_output_pattern}")
     return command
+
+
+def _resolve_scan_device_details(
+    username: str | None, device_name: str | None
+) -> tuple[str | None, str | None]:
+    if username is None:
+        return None, None
+
+    config_manager = get_config_manager()
+    configured_device_id = config_manager.get_device_id(username, device_name)
+    if configured_device_id is None:
+        return None, None
+
+    scanimage_device_name = _resolve_libusb_device_id(configured_device_id)
+    return configured_device_id, scanimage_device_name
 
 
 def _parse_scan_progress_line(raw_line: str) -> dict | None:
@@ -314,6 +353,9 @@ def _process_scan(progress_callback=None) -> dict:
     config_manager = get_config_manager()
     username = config_manager.get_current_user()
     device_name = config_manager.get_active_device_name(username)
+    configured_device_id, scanimage_device_name = _resolve_scan_device_details(
+        username, device_name
+    )
 
     with tempfile.TemporaryDirectory(prefix="scanexpress-") as working_dir:
         working_dir_path = Path(working_dir)
@@ -363,6 +405,8 @@ def _process_scan(progress_callback=None) -> dict:
         "page_count": page_count,
         "username": username,
         "device_name": device_name,
+        "device_id": configured_device_id,
+        "scanimage_device_name": scanimage_device_name,
     }
 
 

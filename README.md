@@ -87,6 +87,9 @@ Configuration resolution is **config-first with env fallback**:
 - `config.ini` `:scanimage-params` subsection is the preferred source for scanner command options; keys are passed through dynamically as CLI args.
 - `config.ini` `[global]` is primary source for `paperless_base_url`, `scan_timeout_seconds`, and `paperless_timeout_seconds`.
 - `config.ini` `[global]` also defines `current_user`.
+- `config.ini` `[user:<username>]` supports:
+  - `default_device` (required when user has one or more `[user:<username>:device:*]` templates) to choose the default scanner template deterministically.
+  - `default_scanimage_params_device` (optional) to choose which device template supplies default `scanimage` parameters.
 
 See full schema and examples in [docs/CONFIG_SPEC.md](docs/CONFIG_SPEC.md).
 
@@ -104,6 +107,7 @@ Dynamic scanner args from config:
 - Preferred: define arbitrary scanner options in `[user:<username>:device:<device_name>:scanimage-params]`.
 - Each key/value is passed to scanner as `--<key> <value>` (underscores become dashes).
 - Compatibility fallback: when `:scanimage-params` is absent, extra non-reserved keys in `[user:<username>:device:<device_name>]` are also passed as scanner args.
+- If no `device_id` is configured for the selected/default template, ScanExpress runs the scan command without the `-d` argument.
 
 ## License
 

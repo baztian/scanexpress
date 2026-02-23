@@ -40,6 +40,74 @@ class BatchScanCommandTests(unittest.TestCase):
         self.assertIn("--format=tiff", command)
         self.assertIn("--batch=/tmp/scan_output%d.tiff", command)
 
+    def test_build_scan_command_omits_device_flag_when_device_id_missing(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
+        fake_config_manager.get_device_id.return_value = None
+        fake_config_manager.get_device_scanimage_params.return_value = {"resolution": "300"}
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            command = scan_app._build_scan_command(
+                Path("/tmp/scan_output%d.tiff"),
+                username="alice",
+                device_name="brother-bw",
+            )
+
+        self.assertNotIn("-d", command)
+        self.assertIn("--resolution", command)
+        self.assertIn("300", command)
+
+    def test_build_scan_command_resolves_libusb_udev_symlink_to_bus_devnum(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:/dev/brother-scanner"
+        fake_config_manager.get_device_scanimage_params.return_value = {}
+
+        with patch("app.get_config_manager", return_value=fake_config_manager), patch(
+            "app.Path.resolve", return_value=Path("/dev/bus/usb/001/007")
+        ):
+            command = scan_app._build_scan_command(
+                Path("/tmp/scan_output%d.tiff"),
+                username="alice",
+                device_name="brother-bw",
+            )
+
+        self.assertIn("-d", command)
+        self.assertIn("BrotherADS2200:libusb:001:007", command)
+        self.assertNotIn("BrotherADS2200:libusb:/dev/brother-scanner", command)
+
+    def test_build_scan_command_keeps_device_id_when_udev_link_resolution_fails(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:/dev/brother-scanner"
+        fake_config_manager.get_device_scanimage_params.return_value = {}
+
+        with patch("app.get_config_manager", return_value=fake_config_manager), patch(
+            "app.Path.resolve", side_effect=FileNotFoundError
+        ):
+            command = scan_app._build_scan_command(
+                Path("/tmp/scan_output%d.tiff"),
+                username="alice",
+                device_name="brother-bw",
+            )
+
+        self.assertIn("-d", command)
+        self.assertIn("BrotherADS2200:libusb:/dev/brother-scanner", command)
+
+    def test_resolve_scan_device_details_returns_configured_and_runtime_device_names(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:/dev/brother-scanner"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager), patch(
+            "app.Path.resolve", return_value=Path("/dev/bus/usb/001/007")
+        ):
+            configured_device_id, scanimage_device_name = scan_app._resolve_scan_device_details(
+                "alice", "brother-bw"
+            )
+
+        self.assertEqual(configured_device_id, "BrotherADS2200:libusb:/dev/brother-scanner")
+        self.assertEqual(scanimage_device_name, "BrotherADS2200:libusb:001:007")
+
     @patch("app.time.monotonic")
     @patch("app.select.select")
     @patch("app.subprocess.Popen")
@@ -136,6 +204,27 @@ class PaperlessTimeoutTests(unittest.TestCase):
         fake_config_manager.get_paperless_timeout_seconds.return_value = 4
         with patch("app.get_config_manager", return_value=fake_config_manager):
             self.assertEqual(scan_app._calculate_paperless_timeout_seconds(3, "alice"), 22)
+
+
+class ApiPayloadTests(unittest.TestCase):
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
+    @patch("app._convert_tiffs_to_pdf", return_value=3)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_process_scan_includes_device_identifiers_in_success_payload(
+        self, _mock_run_scan, _mock_convert, _mock_upload
+    ):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            result = scan_app._process_scan()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["device_name"], "brother-bw")
+        self.assertEqual(result["device_id"], "BrotherADS2200:libusb:001:002")
+        self.assertEqual(result["scanimage_device_name"], "BrotherADS2200:libusb:001:002")
 
 
 @unittest.skipIf(scan_app.Image is None, "Pillow is required for conversion tests")

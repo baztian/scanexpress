@@ -36,6 +36,8 @@ Each user gets its own section: `[user:<username>]`
 **Keys:**
 
 - `paperless_api_token` (required): Token for uploading to Paperless-ngx
+- `default_device` (required when one or more device templates exist): Explicit default device template name for this user
+- `default_scanimage_params_device` (optional): Device template name whose scanimage params should be used by default
 
 ---
 
@@ -72,9 +74,11 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
 
 **Keys:**
 
-- `device_id` (required): Device identifier passed to scanner command via `-d` flag
+- `device_id` (optional): Device identifier passed to scanner command via `-d` flag. If unset, scanner command runs without `-d`.
 - `scan_command` (optional): Device-specific scan command. If not provided, backend defaults to `scanimage`.
 - `scan_timeout_seconds` (optional): Timeout per page during scanning for this device (integer seconds)
+
+Note: `scanimage` does not natively accept `...:libusb:/dev/<symlink>` device identifiers. This `/dev/...` form is a ScanExpress convenience syntax.
 
 ### Device ID Format & Stability
 
@@ -94,32 +98,34 @@ Create a udev rule to generate a persistent symlink to your scanner:
 
 1. Find your scanner's USB vendor and product IDs:
 
-        lsusb
+       lsusb
 
    Example output:
 
-        Bus 001 Device 003: ID 04f9:03fb Brother Industries, Ltd. ADS-2200
+       Bus 001 Device 003: ID 04f9:03fb Brother Industries, Ltd. ADS-2200
 
    The IDs are `04f9` (vendor) and `03fb` (product).
 
 2. Create a udev rule file at `/etc/udev/rules.d/99-brother-scanner.rules`:
 
-        sudo cat > /etc/udev/rules.d/99-brother-scanner.rules << 'EOF'
-        SUBSYSTEM=="usb", ATTRS{idVendor}=="04f9", ATTRS{idProduct}=="03fb", SYMLINK+="brother-scanner"
-        EOF
+       cat << 'EOF' | sudo tee /etc/udev/rules.d/99-brother-scanner.rules >/dev/null
+       SUBSYSTEM=="usb", ATTRS{idVendor}=="04f9", ATTRS{idProduct}=="03fb", SYMLINK+="brother-scanner"
+       EOF
 
 3. Reload and trigger udev rules:
 
-        sudo udevadm control --reload-rules
-        sudo udevadm trigger
+       sudo udevadm control --reload-rules
+       sudo udevadm trigger
 
 4. Verify the symlink was created:
 
-        ls -la /dev/scanner
+       ls -la /dev/brother-scanner
 
 5. Update your device configuration to use the symlink:
 
-    device_id = BrotherADS2200:libusb:/dev/brother-scanner
+       device_id = BrotherADS2200:libusb:/dev/brother-scanner
+
+    This is intentionally not a standard `scanimage` device specifier. At runtime, ScanExpress resolves `/dev/brother-scanner` to `/dev/bus/usb/BBB/DDD` and invokes `scanimage -d BrotherADS2200:libusb:BBB:DDD`.
 
 Now your device reference is stable across unplug/replug cycles.
 
@@ -242,7 +248,13 @@ When a scan is triggered, the caller can specify which device template to use:
 
 **Phase 1 (current):**
 
-- Use first available device for the configured user (`global.current_user`).
+- If device templates exist for a user, `[user:<username>] default_device` must be set and that template is used.
+- If no device templates exist, scanning runs without a `-d` device parameter.
+
+Scanimage parameter profile selection:
+
+- If `[user:<username>] default_scanimage_params_device` is set, that template supplies default scanimage params.
+- Otherwise, the selected active device template supplies scanimage params.
 
 **Phase 2 (future):**
 

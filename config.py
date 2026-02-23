@@ -137,10 +137,55 @@ class ConfigManager:
 
     def get_active_device_name(self, username: str) -> str | None:
         configured_devices = self.list_user_devices(username)
-        if configured_devices:
-            return configured_devices[0]
+        if not configured_devices:
+            return None
 
-        return None
+        default_device = self._read_section_key(
+            self._section_name_user(username), "default_device"
+        )
+        if default_device is None:
+            configured_devices_str = ", ".join(configured_devices)
+            raise RuntimeError(
+                f"{self._section_name_user(username)}.default_device is required when "
+                f"devices are configured for user '{username}'. Available devices: "
+                f"{configured_devices_str}"
+            )
+
+        if default_device in configured_devices:
+            return default_device
+
+        configured_devices_str = ", ".join(configured_devices)
+        raise RuntimeError(
+            f"{self._section_name_user(username)}.default_device={default_device} "
+            f"but device '{default_device}' is not configured for user '{username}'. "
+            f"Available devices: {configured_devices_str}"
+        )
+
+    def get_active_scanimage_params_device_name(
+        self, username: str, device_name: str | None = None
+    ) -> str | None:
+        if device_name is not None:
+            return device_name
+
+        configured_devices = self.list_user_devices(username)
+        if not configured_devices:
+            return None
+
+        default_scanimage_params_device = self._read_section_key(
+            self._section_name_user(username), "default_scanimage_params_device"
+        )
+        if default_scanimage_params_device is not None:
+            if default_scanimage_params_device in configured_devices:
+                return default_scanimage_params_device
+            configured_devices_str = ", ".join(configured_devices)
+            raise RuntimeError(
+                f"{self._section_name_user(username)}.default_scanimage_params_device="
+                f"{default_scanimage_params_device} but device "
+                f"'{default_scanimage_params_device}' is not configured for user '{username}'. "
+                f"Available devices: {configured_devices_str}"
+            )
+
+        return self.get_active_device_name(username)
 
     def get_user_device(self, username: str, device_name: str) -> dict:
         section_name = self._section_name_device(username, device_name)
@@ -154,7 +199,7 @@ class ConfigManager:
     def get_device_scanimage_params(
         self, username: str, device_name: str | None = None
     ) -> dict[str, str]:
-        selected_device_name = device_name or self.get_active_device_name(username)
+        selected_device_name = self.get_active_scanimage_params_device_name(username, device_name)
         if selected_device_name is None:
             return {}
 
