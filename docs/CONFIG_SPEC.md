@@ -61,12 +61,12 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     resolution = 200
     mode = Gray
 
-    [user:bob:device:canon-default]
-    device_id = Canon:usb:123:456
+    [userbrother-:bob:device:canon-default]
+    device_id = Canon:usb:123:brother --456
     scan_command = /usr/bin/scanimage
     scan_timeout_seconds = 40
 
-    [user:bob:device:canon-default:scanimage-params]
+    [user:bob:device:canon-default:scbrother-animage-params]
     resolution = 150
     mode = 24 bit Color
 
@@ -75,6 +75,53 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
 - `device_id` (required): Device identifier passed to scanner command via `-d` flag
 - `scan_command` (optional): Device-specific scan command. If not provided, backend defaults to `scanimage`.
 - `scan_timeout_seconds` (optional): Timeout per page during scanning for this device (integer seconds)
+
+### Device ID Format & Stability
+
+The `device_id` is passed to `scanimage` with the `-d` flag. USB device addresses (e.g. `:001:002`) can change when a scanner is unplugged and replugged, breaking your configuration. To create a stable reference, use a udev rule to create a persistent symlink.
+
+**Without udev (not recommended):**
+
+Using numeric USB addresses is simple but fragile:
+
+    device_id = BrotherADS2200:libusb:001:002
+
+When you unplug and replug the scanner, the device numbers change and your config becomes invalid.
+
+**With udev (recommended):**
+
+Create a udev rule to generate a persistent symlink to your scanner:
+
+1. Find your scanner's USB vendor and product IDs:
+
+        lsusb
+
+   Example output:
+
+        Bus 001 Device 003: ID 04f9:03fb Brother Industries, Ltd. ADS-2200
+
+   The IDs are `04f9` (vendor) and `03fb` (product).
+
+2. Create a udev rule file at `/etc/udev/rules.d/99-brother-scanner.rules`:
+
+        sudo cat > /etc/udev/rules.d/99-brother-scanner.rules << 'EOF'
+        SUBSYSTEM=="usb", ATTRS{idVendor}=="04f9", ATTRS{idProduct}=="03fb", SYMLINK+="brother-scanner"
+        EOF
+
+3. Reload and trigger udev rules:
+
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger
+
+4. Verify the symlink was created:
+
+        ls -la /dev/scanner
+
+5. Update your device configuration to use the symlink:
+
+    device_id = BrotherADS2200:libusb:/dev/brother-scanner
+
+Now your device reference is stable across unplug/replug cycles.
 
 ### Scanimage Parameters (Dynamic)
 
