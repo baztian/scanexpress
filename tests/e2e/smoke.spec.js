@@ -80,6 +80,9 @@ test("clicking Start Scan runs backend with fake scanner and fake Paperless", as
   await page.getByRole("button", { name: "Start Scan" }).click();
 
   await expect(page.locator("#statusText")).toHaveText(/^Status: ok \(.+\)$/);
+  await expect(page.locator("#statusStats")).toHaveText(
+    /^Total: \d+s\nScan: \d+s\nPaperless: \d+s\nScan\/page: \d+s\nPaperless\/page: \d+s$/
+  );
 });
 
 test("clicking Start Scan surfaces backend error when fake scanner fails", async ({ page }) => {
@@ -98,4 +101,50 @@ test("clicking Start Scan preserves multipage TIFF as multipage PDF", async ({ p
   await page.getByRole("button", { name: "Start Scan" }).click();
 
   await expect(page.locator("#statusText")).toHaveText(/Status: ok \(.+pages=3.+\)/);
+});
+
+test("reload while busy keeps Start Scan disabled", async ({ page }) => {
+  await page.route("**/api/scan/status**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "ok",
+        in_progress: true,
+        username: "test",
+        device_name: "fake",
+        device_id: "fake-device",
+        scanimage_device_name: "fake-device",
+        device_lock_id: "fake-device",
+      }),
+    });
+  });
+
+  await page.goto("/");
+
+  const scanButton = page.getByRole("button", { name: "Start Scan" });
+  await expect(scanButton).toBeDisabled();
+
+  await page.reload();
+  await expect(scanButton).toBeDisabled();
+});
+
+test("switching device while scan is running keeps stream and re-enables button when done", async ({ page }) => {
+  await fs.writeFile(modeFilePath, "slow", "utf-8");
+
+  await page.goto("/");
+
+  const scanButton = page.getByRole("button", { name: "Start Scan" });
+  const selector = page.getByLabel("Device configuration");
+
+  await scanButton.click();
+  await expect(scanButton).toBeDisabled();
+
+  await selector.selectOption("flatbed");
+  await expect(selector).toHaveValue("flatbed");
+  await expect(scanButton).toBeDisabled();
+
+  await expect(page.locator("#statusText")).toHaveText(/^Status: ok \(.+\)$/);
+  await expect(selector).toHaveValue("flatbed");
+  await expect(scanButton).toBeEnabled();
 });

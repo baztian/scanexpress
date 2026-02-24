@@ -208,12 +208,14 @@ class PaperlessTimeoutTests(unittest.TestCase):
 
 
 class ApiPayloadTests(unittest.TestCase):
+    @patch("app.time.monotonic")
     @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
     @patch("app._convert_tiffs_to_pdf", return_value=3)
     @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
     def test_process_scan_includes_device_identifiers_in_success_payload(
-        self, _mock_run_scan, _mock_convert, _mock_upload
+        self, _mock_run_scan, _mock_convert, _mock_upload, mock_monotonic
     ):
+        mock_monotonic.side_effect = [10.0, 11.0, 14.0, 20.0, 22.5, 23.0]
         fake_config_manager = Mock()
         fake_config_manager.get_current_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
@@ -226,6 +228,21 @@ class ApiPayloadTests(unittest.TestCase):
         self.assertEqual(result["device_name"], "brother-bw")
         self.assertEqual(result["device_id"], "BrotherADS2200:libusb:001:002")
         self.assertEqual(result["scanimage_device_name"], "BrotherADS2200:libusb:001:002")
+        self.assertEqual(
+            result["timing_metrics"],
+            {
+                "total_seconds": 13.0,
+                "scan_seconds": 3.0,
+                "paperless_seconds": 2.5,
+                "scan_seconds_per_page": 1.0,
+                "paperless_seconds_per_page": 0.833,
+            },
+        )
+        self.assertIn("total=13.0s", result["message"])
+        self.assertIn("scan=3.0s", result["message"])
+        self.assertIn("paperless=2.5s", result["message"])
+        self.assertIn("scan_per_page=1.0s", result["message"])
+        self.assertIn("paperless_per_page=0.833s", result["message"])
 
 
 class ApiDeviceConfigurationTests(unittest.TestCase):
@@ -297,6 +314,85 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["status"], "error")
         self.assertIn("not configured", payload["message"])
+
+
+class ApiScanLockTests(unittest.TestCase):
+    def setUp(self):
+        scan_app.app.config["TESTING"] = True
+        self.client = scan_app.app.test_client()
+
+    def tearDown(self):
+        with scan_app._DEVICE_SCAN_LOCK:
+            scan_app._ACTIVE_DEVICE_SCANS.clear()
+
+    @patch("app._process_scan")
+    def test_post_scan_rejects_when_same_device_is_already_scanning(self, mock_process_scan):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.list_user_devices.return_value = ["brother-bw"]
+        fake_config_manager.get_device_id.return_value = "scanner-bw"
+
+        with scan_app._DEVICE_SCAN_LOCK:
+            scan_app._ACTIVE_DEVICE_SCANS["scanner-bw"] = {
+                "username": "alice",
+                "device_name": "brother-bw",
+                "started_at": 12345.0,
+            }
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.post("/api/scan", json={"device_name": "brother-bw"})
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "busy")
+        self.assertIn("already in progress", payload["message"])
+        mock_process_scan.assert_not_called()
+
+    def test_get_scan_status_reports_device_in_progress(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.list_user_devices.return_value = ["brother-bw"]
+        fake_config_manager.get_device_id.return_value = "scanner-bw"
+
+        with scan_app._DEVICE_SCAN_LOCK:
+            scan_app._ACTIVE_DEVICE_SCANS["scanner-bw"] = {
+                "username": "alice",
+                "device_name": "brother-bw",
+                "started_at": 12345.0,
+            }
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get("/api/scan/status", query_string={"device_name": "brother-bw"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertTrue(payload["in_progress"])
+        self.assertEqual(payload["device_lock_id"], "scanner-bw")
+        self.assertIn("active_scan", payload)
+
+    @patch("app._process_scan")
+    def test_post_scan_stream_rejects_when_same_device_is_already_scanning(self, mock_process_scan):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.list_user_devices.return_value = ["brother-bw"]
+        fake_config_manager.get_device_id.return_value = "scanner-bw"
+
+        with scan_app._DEVICE_SCAN_LOCK:
+            scan_app._ACTIVE_DEVICE_SCANS["scanner-bw"] = {
+                "username": "alice",
+                "device_name": "brother-bw",
+                "started_at": 12345.0,
+            }
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.post("/api/scan/stream", json={"device_name": "brother-bw"})
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "busy")
+        self.assertIn("already in progress", payload["message"])
+        mock_process_scan.assert_not_called()
 
 
 @unittest.skipIf(scan_app.Image is None, "Pillow is required for conversion tests")

@@ -21,6 +21,8 @@ Guidance for AI coding agents working in `scanexpress`.
 
 ## Coding Standards
 
+- General:
+  - Test-first policy (mandatory): For any code change, write or update the relevant test(s) first when possible, then implement code.
 - Python:
   - Follow existing Flask style in `app.py`.
   - Keep functions small and explicit.

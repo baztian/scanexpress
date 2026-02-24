@@ -15,6 +15,7 @@
 - `POST /api/scan`: synchronous JSON response (compatible with scripts and curl).
 - `POST /api/scan/stream`: streaming NDJSON progress updates for live UI status during scanning.
 - Successful responses include `username`, selected template `device_name`, configured `device_id`, and runtime `scanimage_device_name` (the value passed to scanner `-d`) for traceability.
+- Successful completion payloads include `timing_metrics` with `total_seconds`, `scan_seconds`, `paperless_seconds`, and scan/upload per-page timing values.
 
 ## Notes
 

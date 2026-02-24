@@ -2,6 +2,7 @@
 import io
 import os
 import sys
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -88,6 +89,21 @@ def main() -> int:
         return 0
 
     single_page = _build_tiff_bytes("white")
+
+    if mode == "slow":
+        _emit_progress("Scanning page 1")
+        time.sleep(1.0)
+        _emit_progress("Scanned page 1. (scanner status = 5)")
+        time.sleep(1.0)
+        _emit_progress("Batch terminated, 1 pages scanned")
+        if batch_pattern:
+            _write_batch_outputs(batch_pattern, [single_page])
+            return 0
+
+        sys.stdout.buffer.write(single_page)
+        sys.stdout.buffer.flush()
+        return 0
+
     _emit_progress("Scanning page 1")
     _emit_progress("Scanned page 1. (scanner status = 5)")
     _emit_progress("Batch terminated, 1 pages scanned")

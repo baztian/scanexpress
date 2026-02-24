@@ -81,6 +81,8 @@ Quick validation:
 
 For live UI progress updates, the frontend uses `POST /api/scan/stream` (NDJSON stream) and updates status as scan pages complete.
 
+On successful completion, scan responses include `timing_metrics` (`total_seconds`, `scan_seconds`, `paperless_seconds`, `scan_seconds_per_page`, `paperless_seconds_per_page`) and the UI status message includes these values.
+
 Configuration resolution is **config-first with env fallback**:
 
 - `config.ini` user + device sections are primary source for token, scan command, device id, and per-device scan timeout.

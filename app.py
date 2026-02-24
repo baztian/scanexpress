@@ -22,6 +22,12 @@ except ImportError:
 app = Flask(__name__)
 _CONFIG_MANAGER: ConfigManager | None = None
 _TIMEOUT_COUNTDOWN_START_SECONDS = 15
+_DEVICE_SCAN_LOCK = threading.Lock()
+_ACTIVE_DEVICE_SCANS: dict[str, dict[str, object]] = {}
+
+
+class ScanInProgressError(RuntimeError):
+    pass
 
 
 def get_config_manager() -> ConfigManager:
@@ -102,6 +108,115 @@ def _resolve_scan_device_details(
 
     scanimage_device_name = _resolve_libusb_device_id(configured_device_id)
     return configured_device_id, scanimage_device_name
+
+
+def _resolve_scan_lock_device_id(
+    username: str,
+    device_name: str | None,
+    configured_device_id: str | None = None,
+    scanimage_device_name: str | None = None,
+) -> str:
+    if scanimage_device_name is None and configured_device_id is None:
+        configured_device_id, scanimage_device_name = _resolve_scan_device_details(
+            username, device_name
+        )
+
+    if scanimage_device_name is not None:
+        return scanimage_device_name
+
+    if configured_device_id is not None:
+        return configured_device_id
+
+    fallback_device_name = device_name if device_name is not None else "__default__"
+    return f"{username}:{fallback_device_name}"
+
+
+def _acquire_device_scan_lock(device_lock_id: str, username: str, device_name: str | None) -> None:
+    with _DEVICE_SCAN_LOCK:
+        if device_lock_id in _ACTIVE_DEVICE_SCANS:
+            raise ScanInProgressError(
+                f"Scan already in progress for device_id '{device_lock_id}'."
+            )
+
+        _ACTIVE_DEVICE_SCANS[device_lock_id] = {
+            "username": username,
+            "device_name": device_name,
+            "started_at": time.time(),
+        }
+
+
+def _release_device_scan_lock(device_lock_id: str) -> None:
+    with _DEVICE_SCAN_LOCK:
+        _ACTIVE_DEVICE_SCANS.pop(device_lock_id, None)
+
+
+def _build_scan_status_payload(requested_device_name: str | None = None) -> dict:
+    config_manager = get_config_manager()
+    username = config_manager.get_current_user()
+    device_name = _resolve_requested_device_name(
+        config_manager,
+        username,
+        requested_device_name,
+    )
+    configured_device_id, scanimage_device_name = _resolve_scan_device_details(
+        username,
+        device_name,
+    )
+    device_lock_id = _resolve_scan_lock_device_id(
+        username,
+        device_name,
+        configured_device_id,
+        scanimage_device_name,
+    )
+
+    with _DEVICE_SCAN_LOCK:
+        active_scan = _ACTIVE_DEVICE_SCANS.get(device_lock_id)
+
+    payload = {
+        "status": "ok",
+        "in_progress": active_scan is not None,
+        "username": username,
+        "device_name": device_name,
+        "device_id": configured_device_id,
+        "scanimage_device_name": scanimage_device_name,
+        "device_lock_id": device_lock_id,
+    }
+
+    if active_scan is not None:
+        payload["active_scan"] = active_scan
+
+    return payload
+
+
+def _process_scan_with_device_lock(
+    progress_callback=None, requested_device_name: str | None = None
+) -> dict:
+    config_manager = get_config_manager()
+    username = config_manager.get_current_user()
+    device_name = _resolve_requested_device_name(
+        config_manager,
+        username,
+        requested_device_name,
+    )
+    configured_device_id, scanimage_device_name = _resolve_scan_device_details(
+        username,
+        device_name,
+    )
+    device_lock_id = _resolve_scan_lock_device_id(
+        username,
+        device_name,
+        configured_device_id,
+        scanimage_device_name,
+    )
+
+    _acquire_device_scan_lock(device_lock_id, username, device_name)
+    try:
+        return _process_scan(
+            progress_callback=progress_callback,
+            requested_device_name=device_name,
+        )
+    finally:
+        _release_device_scan_lock(device_lock_id)
 
 
 def _build_device_payload(
@@ -370,6 +485,22 @@ def _resolve_scan_timeout_seconds(username: str | None, device_name: str | None 
     return scan_timeout_seconds_per_page
 
 
+def _build_timing_metrics(
+    total_seconds: float,
+    scan_seconds: float,
+    paperless_seconds: float,
+    page_count: int,
+) -> dict:
+    effective_page_count = max(page_count, 1)
+    return {
+        "total_seconds": round(total_seconds, 3),
+        "scan_seconds": round(scan_seconds, 3),
+        "paperless_seconds": round(paperless_seconds, 3),
+        "scan_seconds_per_page": round(scan_seconds / effective_page_count, 3),
+        "paperless_seconds_per_page": round(paperless_seconds / effective_page_count, 3),
+    }
+
+
 def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | None = None) -> dict:
     if username is None:
         raise RuntimeError("username is required for Paperless upload.")
@@ -426,6 +557,7 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
         username, device_name
     )
     scan_timeout_seconds = _resolve_scan_timeout_seconds(username, device_name)
+    total_started_at = time.monotonic()
 
     with tempfile.TemporaryDirectory(prefix="scanexpress-") as working_dir:
         working_dir_path = Path(working_dir)
@@ -442,12 +574,14 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
                 }
             )
 
+        scan_started_at = time.monotonic()
         tiff_paths = _run_scan_command(
             batch_output_pattern,
             progress_callback,
             username,
             device_name,
         )
+        scan_elapsed_seconds = time.monotonic() - scan_started_at
 
         if progress_callback is not None:
             progress_callback(
@@ -471,10 +605,27 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
                 }
             )
 
+        paperless_started_at = time.monotonic()
         paperless_response = _upload_pdf_to_paperless(pdf_path, page_count, username)
+        paperless_elapsed_seconds = time.monotonic() - paperless_started_at
+
+    total_elapsed_seconds = time.monotonic() - total_started_at
+    timing_metrics = _build_timing_metrics(
+        total_elapsed_seconds,
+        scan_elapsed_seconds,
+        paperless_elapsed_seconds,
+        page_count,
+    )
 
     document_id = paperless_response.get("id")
     message = f"Scan uploaded to Paperless-ngx. pages={page_count}"
+    message = (
+        f"{message} total={timing_metrics['total_seconds']}s"
+        f" scan={timing_metrics['scan_seconds']}s"
+        f" paperless={timing_metrics['paperless_seconds']}s"
+        f" scan_per_page={timing_metrics['scan_seconds_per_page']}s"
+        f" paperless_per_page={timing_metrics['paperless_seconds_per_page']}s"
+    )
     if document_id is not None:
         message = f"{message} document_id={document_id}"
 
@@ -487,6 +638,7 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
         "device_name": device_name,
         "device_id": configured_device_id,
         "scanimage_device_name": scanimage_device_name,
+        "timing_metrics": timing_metrics,
     }
 
 
@@ -506,7 +658,12 @@ def trigger_scan():
         )
 
     try:
-        return jsonify(_process_scan(requested_device_name=requested_device_name)), 200
+        return (
+            jsonify(_process_scan_with_device_lock(requested_device_name=requested_device_name)),
+            200,
+        )
+    except ScanInProgressError as exc:
+        return jsonify({"status": "busy", "message": str(exc)}), 409
     except RuntimeError as exc:
         if "not configured for user" in str(exc):
             return jsonify({"status": "error", "message": str(exc)}), 400
@@ -537,9 +694,36 @@ def trigger_scan_stream():
     config_manager = get_config_manager()
     username = config_manager.get_current_user()
     try:
-        _resolve_requested_device_name(config_manager, username, requested_device_name)
+        device_name = _resolve_requested_device_name(
+            config_manager,
+            username,
+            requested_device_name,
+        )
     except RuntimeError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
+
+    configured_device_id, scanimage_device_name = _resolve_scan_device_details(
+        username,
+        device_name,
+    )
+    device_lock_id = _resolve_scan_lock_device_id(
+        username,
+        device_name,
+        configured_device_id,
+        scanimage_device_name,
+    )
+
+    with _DEVICE_SCAN_LOCK:
+        if device_lock_id in _ACTIVE_DEVICE_SCANS:
+            return (
+                jsonify(
+                    {
+                        "status": "busy",
+                        "message": f"Scan already in progress for device_id '{device_lock_id}'.",
+                    }
+                ),
+                409,
+            )
 
     @stream_with_context
     def stream_scan_updates():
@@ -550,8 +734,19 @@ def trigger_scan_stream():
 
         def worker() -> None:
             try:
-                result = _process_scan(send_progress, requested_device_name=requested_device_name)
+                result = _process_scan_with_device_lock(
+                    send_progress,
+                    requested_device_name=device_name,
+                )
                 updates_queue.put({**result, "complete": True})
+            except ScanInProgressError as exc:
+                updates_queue.put(
+                    {
+                        "status": "busy",
+                        "message": str(exc),
+                        "complete": True,
+                    }
+                )
             except RuntimeError as exc:
                 updates_queue.put(
                     {
@@ -597,6 +792,34 @@ def list_device_configurations():
                 {
                     "status": "error",
                     "message": "Unexpected backend error while loading device configurations.",
+                }
+            ),
+            500,
+        )
+
+
+@app.get("/api/scan/status")
+def get_scan_status():
+    requested_device_name = request.args.get("device_name")
+    if requested_device_name is not None and not isinstance(requested_device_name, str):
+        return (
+            jsonify({"status": "error", "message": "device_name must be a string."}),
+            400,
+        )
+
+    try:
+        return jsonify(_build_scan_status_payload(requested_device_name)), 200
+    except RuntimeError as exc:
+        if "not configured for user" in str(exc):
+            return jsonify({"status": "error", "message": str(exc)}), 400
+        return jsonify({"status": "error", "message": str(exc)}), 500
+    except Exception:
+        app.logger.exception("Unexpected error while processing /api/scan/status")
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Unexpected backend error while loading scan status.",
                 }
             ),
             500,

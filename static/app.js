@@ -1,11 +1,16 @@
 const scanButton = document.getElementById("scanButton");
 const statusText = document.getElementById("statusText");
+const statusStats = document.getElementById("statusStats");
 const deviceSelect = document.getElementById("deviceSelect");
 const deviceDetails = document.getElementById("deviceDetails");
 let deviceMap = new Map();
 let selectedDeviceName = null;
 let currentStatus = "idle";
 let currentMessage = "idle";
+let currentStatsLines = [];
+let selectedDeviceBusy = false;
+let refreshingScanStatus = false;
+let activeScanDeviceName = null;
 const timeoutState = {
   phase: "idle",
   countdownStartSeconds: 15,
@@ -30,10 +35,21 @@ function clearTimeoutCountdownState() {
   timeoutState.upload.startedAtMs = null;
 }
 
-function setStatus(status, message) {
+function setStatus(status, message, statsLines = []) {
   currentStatus = status;
   currentMessage = message;
+  currentStatsLines = statsLines;
   renderCurrentStatus();
+}
+
+function isLocallyScanning() {
+  return activeScanDeviceName !== null;
+}
+
+function updateScanButtonState() {
+  if (!scanButton) return;
+  const noDeviceSelected = !selectedDeviceName;
+  scanButton.disabled = noDeviceSelected || selectedDeviceBusy || isLocallyScanning();
 }
 
 function buildTimeoutSuffixForTarget(nowMs, targetState) {
@@ -65,8 +81,13 @@ function formatTimeoutSuffix() {
 }
 
 function renderCurrentStatus() {
-  if (!statusText) return;
-  statusText.textContent = `Status: ${currentStatus} (${currentMessage}${formatTimeoutSuffix()})`;
+  if (statusText) {
+    statusText.textContent = `Status: ${currentStatus} (${currentMessage}${formatTimeoutSuffix()})`;
+  }
+
+  if (statusStats) {
+    statusStats.textContent = currentStatsLines.join("\n");
+  }
 }
 
 setInterval(() => {
@@ -117,6 +138,65 @@ function updatePhaseState(payload, status, nowMs) {
   if (payload?.complete || status === "ok" || status === "error") {
     timeoutState.phase = "done";
   }
+}
+
+function formatTimingStats(timingMetrics) {
+  if (!timingMetrics || typeof timingMetrics !== "object") {
+    return [];
+  }
+
+  const totalSeconds = Math.round(Number(timingMetrics.total_seconds));
+  const scanSeconds = Math.round(Number(timingMetrics.scan_seconds));
+  const paperlessSeconds = Math.round(Number(timingMetrics.paperless_seconds));
+  const scanSecondsPerPage = Math.round(Number(timingMetrics.scan_seconds_per_page));
+  const paperlessSecondsPerPage = Math.round(Number(timingMetrics.paperless_seconds_per_page));
+
+  if (
+    !Number.isFinite(totalSeconds) ||
+    !Number.isFinite(scanSeconds) ||
+    !Number.isFinite(paperlessSeconds) ||
+    !Number.isFinite(scanSecondsPerPage) ||
+    !Number.isFinite(paperlessSecondsPerPage)
+  ) {
+    return [];
+  }
+
+  return [
+    `Total: ${totalSeconds}s`,
+    `Scan: ${scanSeconds}s`,
+    `Paperless: ${paperlessSeconds}s`,
+    `Scan/page: ${scanSecondsPerPage}s`,
+    `Paperless/page: ${paperlessSecondsPerPage}s`,
+  ];
+}
+
+function stripTimingStatsFromMessage(message) {
+  if (typeof message !== "string") {
+    return "No message provided";
+  }
+
+  return message
+    .replace(
+      /\s+total=\d+(?:\.\d+)?s\s+scan=\d+(?:\.\d+)?s\s+paperless=\d+(?:\.\d+)?s\s+scan_per_page=\d+(?:\.\d+)?s\s+paperless_per_page=\d+(?:\.\d+)?s/g,
+      ""
+    )
+    .trim();
+}
+
+function buildStatusPresentation(payload) {
+  const status = payload?.status ?? "unknown";
+  const baseMessage = payload?.message ?? "No message provided";
+  if (status !== "ok") {
+    return {
+      message: baseMessage,
+      statsLines: [],
+    };
+  }
+
+  return {
+    message: stripTimingStatsFromMessage(baseMessage),
+    statsLines: formatTimingStats(payload?.timing_metrics),
+  };
 }
 
 function renderDeviceDetails(selectedDevice) {
@@ -174,6 +254,39 @@ function applyDeviceConfigurations(payload) {
   const deviceNames = devices.map((device) => device.device_name);
   renderDeviceSelect(deviceNames, selectedDeviceName);
   renderDeviceDetails(deviceMap.get(selectedDeviceName) ?? null);
+  updateScanButtonState();
+}
+
+async function refreshScanStatus() {
+  if (!selectedDeviceName || refreshingScanStatus) {
+    return;
+  }
+
+  refreshingScanStatus = true;
+  try {
+    const params = new URLSearchParams({ device_name: selectedDeviceName });
+    const response = await fetch(`/api/scan/status?${params.toString()}`, { method: "GET" });
+
+    if (!response.ok) {
+      selectedDeviceBusy = false;
+      updateScanButtonState();
+      return;
+    }
+
+    const payload = await response.json();
+    selectedDeviceBusy = payload?.in_progress === true;
+    updateScanButtonState();
+
+    if (selectedDeviceBusy && !isLocallyScanning()) {
+      const lockId = payload?.device_lock_id ?? selectedDeviceName;
+      setStatus("busy", `scan in progress on ${lockId}`);
+    }
+  } catch (_error) {
+    selectedDeviceBusy = false;
+    updateScanButtonState();
+  } finally {
+    refreshingScanStatus = false;
+  }
 }
 
 async function loadDeviceConfigurations() {
@@ -186,6 +299,7 @@ async function loadDeviceConfigurations() {
 
     const payload = await response.json();
     applyDeviceConfigurations(payload);
+    await refreshScanStatus();
   } catch (_error) {
     statusText.textContent = "Status: error loading device configuration";
   }
@@ -194,13 +308,21 @@ async function loadDeviceConfigurations() {
 async function selectDeviceConfiguration(deviceName) {
   selectedDeviceName = deviceName;
   renderDeviceDetails(deviceMap.get(selectedDeviceName) ?? null);
-  statusText.textContent = `Status: selected (${selectedDeviceName})`;
+  setStatus("selected", selectedDeviceName);
+  await refreshScanStatus();
 }
 
 async function triggerScan() {
   if (!statusText || !scanButton) return;
+  if (selectedDeviceBusy) {
+    setStatus("busy", "scan in progress for selected device");
+    updateScanButtonState();
+    return;
+  }
+
   scanButton.disabled = true;
   clearTimeoutCountdownState();
+  activeScanDeviceName = selectedDeviceName;
   setStatus("triggering", "triggering...");
 
   try {
@@ -212,7 +334,17 @@ async function triggerScan() {
       body: JSON.stringify({ device_name: selectedDeviceName }),
     });
     if (!response.ok || !response.body) {
-      setStatus("error", "invalid backend response");
+      let message = "invalid backend response";
+      try {
+        const errorPayload = await response.json();
+        if (typeof errorPayload?.message === "string") {
+          message = errorPayload.message;
+        }
+      } catch (_parseError) {
+        // ignore parse error and keep default message
+      }
+
+      setStatus(response.status === 409 ? "busy" : "error", message);
       return;
     }
 
@@ -240,18 +372,24 @@ async function triggerScan() {
         }
 
         const status = payload?.status ?? "unknown";
-        const message = payload?.message ?? "No message provided";
+        const presentation = buildStatusPresentation(payload);
         const nowMs = Date.now();
+        selectedDeviceBusy = status === "busy";
         applyTimeoutMetadata(payload);
         updatePhaseState(payload, status, nowMs);
-        setStatus(status, message);
+        updateScanButtonState();
+        setStatus(status, presentation.message, presentation.statsLines);
       }
     }
   } catch (error) {
     clearTimeoutCountdownState();
     setStatus("error", "error contacting backend");
   } finally {
-    scanButton.disabled = false;
+    clearTimeoutCountdownState();
+    activeScanDeviceName = null;
+    selectedDeviceBusy = false;
+    updateScanButtonState();
+    await refreshScanStatus();
   }
 }
 
@@ -266,5 +404,11 @@ if (deviceSelect) {
     await selectDeviceConfiguration(nextDeviceName);
   });
 }
+
+setInterval(() => {
+  if (!selectedDeviceName) return;
+  if (isLocallyScanning()) return;
+  void refreshScanStatus();
+}, 5000);
 
 void loadDeviceConfigurations();
