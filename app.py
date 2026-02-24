@@ -247,6 +247,10 @@ def _build_device_configurations_payload() -> dict:
     username = config_manager.get_current_user()
     device_names = config_manager.list_user_devices(username)
     selected_device_name = config_manager.get_active_device_name(username)
+    raw_paperless_base_url = config_manager.get_paperless_base_url()
+    paperless_base_url = ""
+    if isinstance(raw_paperless_base_url, str):
+        paperless_base_url = raw_paperless_base_url.strip().rstrip("/")
     devices = [
         _build_device_payload(config_manager, username, device_name)
         for device_name in device_names
@@ -256,6 +260,7 @@ def _build_device_configurations_payload() -> dict:
         "status": "ok",
         "username": username,
         "selected_device_name": selected_device_name,
+        "paperless_base_url": paperless_base_url,
         "devices": devices,
     }
 
@@ -462,6 +467,114 @@ def _build_paperless_upload_url(username: str) -> str:
     return f"{base_url}/api/documents/post_document/"
 
 
+def _extract_paperless_task_id(paperless_response: dict | None) -> str | None:
+    if not isinstance(paperless_response, dict):
+        return None
+
+    for key in ["task_id", "task", "task_uuid"]:
+        value = paperless_response.get(key)
+        if isinstance(value, str) and value.strip() != "":
+            return value.strip()
+
+    raw_response = paperless_response.get("raw_response")
+    if isinstance(raw_response, str) and raw_response.strip() != "":
+        return raw_response.strip()
+
+    return None
+
+
+def _build_paperless_task_url(task_id: str) -> str:
+    base_url = get_config_manager().get_paperless_base_url().strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("global.paperless_base_url is not configured.")
+    return f"{base_url}/api/tasks/?task_id={task_id}"
+
+
+def _normalize_paperless_task_payload(task_id: str, task_payload: dict | None) -> dict:
+    task_payload = task_payload if isinstance(task_payload, dict) else {}
+    related_document = task_payload.get("related_document")
+    if related_document is not None:
+        related_document = str(related_document)
+
+    result = task_payload.get("result")
+    if result is not None:
+        result = str(result)
+
+    date_done = task_payload.get("date_done")
+    if date_done is not None:
+        date_done = str(date_done)
+
+    task_file_name = task_payload.get("task_file_name")
+    if task_file_name is not None:
+        task_file_name = str(task_file_name)
+
+    return {
+        "status": "ok",
+        "task_id": task_id,
+        "task_status": task_payload.get("status"),
+        "related_document": related_document,
+        "result": result,
+        "date_done": date_done,
+        "task_file_name": task_file_name,
+        "raw_task": task_payload,
+    }
+
+
+def _fetch_paperless_task_status(task_id: str, username: str | None = None) -> dict:
+    if username is None:
+        raise RuntimeError("username is required for Paperless task status lookup.")
+
+    api_token = get_config_manager().get_user_token(username)
+    if not api_token:
+        raise RuntimeError(f"No paperless API token configured for user '{username}' in config.ini.")
+
+    task_url = _build_paperless_task_url(task_id)
+    headers = {"Authorization": f"Token {api_token}"}
+
+    try:
+        response = requests.get(
+            task_url,
+            headers=headers,
+            timeout=15,
+        )
+    except requests.Timeout as exc:
+        raise RuntimeError("Paperless task status request timed out.") from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Paperless task status request failed: {exc}") from exc
+
+    if response.status_code >= 400:
+        response_body = response.text.strip()
+        if len(response_body) > 300:
+            response_body = f"{response_body[:300]}..."
+        if not response_body:
+            response_body = response.reason or "unknown Paperless error"
+        raise RuntimeError(
+            f"Paperless task status failed ({response.status_code}): {response_body}"
+        )
+
+    try:
+        parsed_body = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Paperless task status response was not valid JSON.") from exc
+
+    tasks = []
+    if isinstance(parsed_body, list):
+        tasks = parsed_body
+    elif isinstance(parsed_body, dict):
+        maybe_results = parsed_body.get("results")
+        if isinstance(maybe_results, list):
+            tasks = maybe_results
+
+    for task_payload in tasks:
+        if not isinstance(task_payload, dict):
+            continue
+        payload_task_id = task_payload.get("task_id")
+        if payload_task_id is None or str(payload_task_id) == task_id:
+            return _normalize_paperless_task_payload(task_id, task_payload)
+
+    raise LookupError("Task not found")
+
+
 def _calculate_paperless_timeout_seconds(page_count: int, username: str | None = None) -> int:
     timeout_per_page_seconds = None
     if username is not None:
@@ -542,6 +655,10 @@ def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | No
 
     if isinstance(parsed_body, dict):
         return parsed_body
+    if isinstance(parsed_body, str):
+        parsed_value = parsed_body.strip()
+        if parsed_value:
+            return {"raw_response": parsed_value, "task_id": parsed_value}
     return {}
 
 
@@ -618,6 +735,7 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
     )
 
     document_id = paperless_response.get("id")
+    paperless_task_id = _extract_paperless_task_id(paperless_response)
     message = f"Scan uploaded to Paperless-ngx. pages={page_count}"
     message = (
         f"{message} total={timing_metrics['total_seconds']}s"
@@ -639,6 +757,7 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
         "device_id": configured_device_id,
         "scanimage_device_name": scanimage_device_name,
         "timing_metrics": timing_metrics,
+        "paperless_task_id": paperless_task_id,
     }
 
 
@@ -820,6 +939,33 @@ def get_scan_status():
                 {
                     "status": "error",
                     "message": "Unexpected backend error while loading scan status.",
+                }
+            ),
+            500,
+        )
+
+
+@app.get("/api/paperless/tasks/<task_id>")
+def get_paperless_task_status(task_id: str):
+    if task_id.strip() == "":
+        return jsonify({"status": "error", "message": "task_id is required."}), 400
+
+    try:
+        config_manager = get_config_manager()
+        username = config_manager.get_current_user()
+        payload = _fetch_paperless_task_status(task_id, username)
+        return jsonify(payload), 200
+    except LookupError:
+        return jsonify({"status": "error", "message": "Task not found"}), 404
+    except RuntimeError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 502
+    except Exception:
+        app.logger.exception("Unexpected error while processing /api/paperless/tasks/<task_id>")
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Unexpected backend error while loading Paperless task status.",
                 }
             ),
             500,

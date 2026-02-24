@@ -3,14 +3,22 @@ const statusText = document.getElementById("statusText");
 const statusStats = document.getElementById("statusStats");
 const deviceSelect = document.getElementById("deviceSelect");
 const deviceDetails = document.getElementById("deviceDetails");
+const recentUploadsList = document.getElementById("recentUploadsList");
 let deviceMap = new Map();
 let selectedDeviceName = null;
+let paperlessBaseUrl = "";
 let currentStatus = "idle";
 let currentMessage = "idle";
 let currentStatsLines = [];
 let selectedDeviceBusy = false;
 let refreshingScanStatus = false;
 let activeScanDeviceName = null;
+const PAPERLESS_POLL_INTERVAL_MS = 2000;
+const PAPERLESS_MAX_RETRY_INTERVAL_MS = 15000;
+const MAX_RECENT_UPLOADS = 10;
+const PAPERLESS_TERMINAL_STATUSES = new Set(["SUCCESS", "FAILURE"]);
+const recentPaperlessTasks = [];
+const paperlessPollTimers = new Map();
 const timeoutState = {
   phase: "idle",
   countdownStartSeconds: 15,
@@ -78,6 +86,216 @@ function formatTimeoutSuffix() {
     return buildTimeoutSuffixForTarget(nowMs, timeoutState.upload);
   }
   return "";
+}
+
+function escapeTaskId(taskId) {
+  return encodeURIComponent(taskId);
+}
+
+function buildDocumentUrl(relatedDocumentId) {
+  if (!relatedDocumentId || !paperlessBaseUrl) {
+    return null;
+  }
+
+  return `${paperlessBaseUrl}/documents/${relatedDocumentId}`;
+}
+
+function formatSubmittedAt(submittedAt) {
+  if (typeof submittedAt !== "number") {
+    return "n/a";
+  }
+
+  try {
+    return new Date(submittedAt).toLocaleString();
+  } catch (_error) {
+    return "n/a";
+  }
+}
+
+function upsertRecentTaskEntry(taskId, updates = {}) {
+  const existingIndex = recentPaperlessTasks.findIndex((entry) => entry.taskId === taskId);
+  if (existingIndex >= 0) {
+    recentPaperlessTasks[existingIndex] = {
+      ...recentPaperlessTasks[existingIndex],
+      ...updates,
+      taskId,
+    };
+    return recentPaperlessTasks[existingIndex];
+  }
+
+  const entry = {
+    taskId,
+    submittedAt: Date.now(),
+    fileName: null,
+    taskStatus: "STARTED",
+    resultText: null,
+    relatedDocumentId: null,
+    documentUrl: null,
+    isPolling: true,
+    lastError: null,
+    lastUpdatedAt: Date.now(),
+    pollFailureCount: 0,
+    ...updates,
+  };
+
+  recentPaperlessTasks.unshift(entry);
+  while (recentPaperlessTasks.length > MAX_RECENT_UPLOADS) {
+    const removedEntry = recentPaperlessTasks.pop();
+    if (removedEntry?.taskId) {
+      stopTaskPolling(removedEntry.taskId);
+    }
+  }
+
+  return entry;
+}
+
+function renderRecentUploads() {
+  if (!recentUploadsList) {
+    return;
+  }
+
+  recentUploadsList.innerHTML = "";
+  for (const entry of recentPaperlessTasks) {
+    const item = document.createElement("li");
+    const fileLabel = entry.fileName ?? "unknown file";
+    const statusLabel = entry.taskStatus ?? "unknown";
+    const resultLabel = entry.lastError
+      ? `poll_error: ${entry.lastError}`
+      : (entry.resultText ?? "");
+    item.textContent = `${formatSubmittedAt(entry.submittedAt)} | ${fileLabel} | ${entry.taskId} | ${statusLabel}${resultLabel ? ` | ${resultLabel}` : ""}`;
+
+    if (entry.documentUrl) {
+      item.append(" ");
+      const link = document.createElement("a");
+      link.href = entry.documentUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open document";
+      item.appendChild(link);
+    }
+
+    recentUploadsList.appendChild(item);
+  }
+}
+
+function stopTaskPolling(taskId) {
+  const timer = paperlessPollTimers.get(taskId);
+  if (timer) {
+    clearTimeout(timer);
+    paperlessPollTimers.delete(taskId);
+  }
+
+  const existingIndex = recentPaperlessTasks.findIndex((entry) => entry.taskId === taskId);
+  if (existingIndex >= 0) {
+    recentPaperlessTasks[existingIndex] = {
+      ...recentPaperlessTasks[existingIndex],
+      isPolling: false,
+    };
+  }
+}
+
+function scheduleTaskPolling(taskId, delayMs) {
+  const existingTimer = paperlessPollTimers.get(taskId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+
+  const timer = setTimeout(() => {
+    void pollPaperlessTask(taskId);
+  }, delayMs);
+  paperlessPollTimers.set(taskId, timer);
+}
+
+async function pollPaperlessTask(taskId) {
+  const entry = recentPaperlessTasks.find((taskEntry) => taskEntry.taskId === taskId);
+  if (!entry) {
+    stopTaskPolling(taskId);
+    renderRecentUploads();
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/paperless/tasks/${escapeTaskId(taskId)}`, {
+      method: "GET",
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.status !== "ok") {
+      const nextFailureCount = (entry.pollFailureCount ?? 0) + 1;
+      const message = payload?.message ?? "polling failed";
+      upsertRecentTaskEntry(taskId, {
+        isPolling: true,
+        lastError: message,
+        lastUpdatedAt: Date.now(),
+        pollFailureCount: nextFailureCount,
+      });
+      const backoffDelay = Math.min(
+        PAPERLESS_POLL_INTERVAL_MS * 2 ** nextFailureCount,
+        PAPERLESS_MAX_RETRY_INTERVAL_MS
+      );
+      renderRecentUploads();
+      scheduleTaskPolling(taskId, backoffDelay);
+      return;
+    }
+
+    const nextTaskStatus = payload?.task_status ?? "unknown";
+    const isTerminalStatus = PAPERLESS_TERMINAL_STATUSES.has(nextTaskStatus);
+    const relatedDocumentId = payload?.related_document ? String(payload.related_document) : null;
+    const nextEntry = upsertRecentTaskEntry(taskId, {
+      taskStatus: nextTaskStatus,
+      resultText: payload?.result ? String(payload.result) : null,
+      relatedDocumentId,
+      documentUrl: buildDocumentUrl(relatedDocumentId),
+      fileName: payload?.task_file_name ? String(payload.task_file_name) : entry.fileName,
+      isPolling: !isTerminalStatus,
+      lastError: null,
+      lastUpdatedAt: Date.now(),
+      pollFailureCount: 0,
+    });
+
+    renderRecentUploads();
+    if (!isTerminalStatus) {
+      scheduleTaskPolling(taskId, PAPERLESS_POLL_INTERVAL_MS);
+      return;
+    }
+
+    stopTaskPolling(taskId);
+  } catch (_error) {
+    const nextFailureCount = (entry.pollFailureCount ?? 0) + 1;
+    upsertRecentTaskEntry(taskId, {
+      isPolling: true,
+      lastError: "error contacting backend",
+      lastUpdatedAt: Date.now(),
+      pollFailureCount: nextFailureCount,
+    });
+    const backoffDelay = Math.min(
+      PAPERLESS_POLL_INTERVAL_MS * 2 ** nextFailureCount,
+      PAPERLESS_MAX_RETRY_INTERVAL_MS
+    );
+    renderRecentUploads();
+    scheduleTaskPolling(taskId, backoffDelay);
+  }
+}
+
+function registerPaperlessTaskFromScanPayload(payload) {
+  const taskId = payload?.paperless_task_id;
+  if (typeof taskId !== "string" || taskId.trim() === "") {
+    return;
+  }
+
+  const normalizedTaskId = taskId.trim();
+  upsertRecentTaskEntry(normalizedTaskId, {
+    submittedAt: Date.now(),
+    taskStatus: "STARTED",
+    resultText: null,
+    relatedDocumentId: null,
+    documentUrl: null,
+    isPolling: true,
+    lastError: null,
+    lastUpdatedAt: Date.now(),
+    pollFailureCount: 0,
+  });
+  renderRecentUploads();
+  scheduleTaskPolling(normalizedTaskId, 0);
 }
 
 function renderCurrentStatus() {
@@ -250,6 +468,9 @@ function applyDeviceConfigurations(payload) {
   const devices = payload?.devices ?? [];
   deviceMap = new Map(devices.map((device) => [device.device_name, device]));
   selectedDeviceName = payload?.selected_device_name ?? null;
+  paperlessBaseUrl = typeof payload?.paperless_base_url === "string"
+    ? payload.paperless_base_url.replace(/\/$/, "")
+    : "";
 
   const deviceNames = devices.map((device) => device.device_name);
   renderDeviceSelect(deviceNames, selectedDeviceName);
@@ -379,6 +600,7 @@ async function triggerScan() {
         updatePhaseState(payload, status, nowMs);
         updateScanButtonState();
         setStatus(status, presentation.message, presentation.statsLines);
+        registerPaperlessTaskFromScanPayload(payload);
       }
     }
   } catch (error) {

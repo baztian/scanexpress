@@ -83,6 +83,17 @@ For live UI progress updates, the frontend uses `POST /api/scan/stream` (NDJSON 
 
 On successful completion, scan responses include `timing_metrics` (`total_seconds`, `scan_seconds`, `paperless_seconds`, `scan_seconds_per_page`, `paperless_seconds_per_page`) and the UI status message includes these values.
 
+`POST /api/scan` and `POST /api/scan/stream` success payloads now also include:
+
+- `paperless_task_id` (UUID string or `null`), parsed from Paperless upload responses including raw JSON UUID-string responses.
+
+UI recent upload tracking:
+
+- The page shows a `Recent uploads` list (latest 10 entries, newest first).
+- For each entry with `paperless_task_id`, the frontend polls backend task status every 2 seconds until a terminal state.
+- Polling uses backend proxy endpoint `GET /api/paperless/tasks/<task_id>` so browser clients never call Paperless directly with tokens.
+- On `SUCCESS` with `related_document`, the UI renders a link to `<paperless_base_url>/documents/<related_document>`.
+
 Configuration resolution is **config-first with env fallback**:
 
 - `config.ini` user + device sections are primary source for token, scan command, device id, and per-device scan timeout.

@@ -244,6 +244,105 @@ class ApiPayloadTests(unittest.TestCase):
         self.assertIn("scan_per_page=1.0s", result["message"])
         self.assertIn("paperless_per_page=0.833s", result["message"])
 
+    @patch("app.time.monotonic")
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242, "task_id": "task-123"})
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_process_scan_includes_paperless_task_id_from_object_response(
+        self, _mock_run_scan, _mock_convert, _mock_upload, mock_monotonic
+    ):
+        mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            result = scan_app._process_scan()
+
+        self.assertEqual(result["paperless_task_id"], "task-123")
+
+    @patch("app.time.monotonic")
+    @patch(
+        "app._upload_pdf_to_paperless",
+        return_value={"raw_response": "cf13eea8-5c7a-40b8-aac8-bd8bdc315769"},
+    )
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_process_scan_includes_paperless_task_id_from_raw_uuid_response(
+        self, _mock_run_scan, _mock_convert, _mock_upload, mock_monotonic
+    ):
+        mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            result = scan_app._process_scan()
+
+        self.assertEqual(result["paperless_task_id"], "cf13eea8-5c7a-40b8-aac8-bd8bdc315769")
+
+
+class ApiPaperlessTaskTests(unittest.TestCase):
+    def setUp(self):
+        scan_app.app.config["TESTING"] = True
+        self.client = scan_app.app.test_client()
+
+    @patch("app.requests.get")
+    def test_get_paperless_task_status_returns_normalized_started_payload(self, mock_requests_get):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
+        fake_config_manager.get_user_token.return_value = "secret-token"
+
+        task_id = "11e48898-bde8-4695-afd6-5a61452a4b54"
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [
+            {
+                "task_id": task_id,
+                "status": "STARTED",
+                "related_document": None,
+                "result": None,
+                "date_done": None,
+                "task_file_name": "Offer.pdf",
+            }
+        ]
+        mock_requests_get.return_value = mock_response
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get(f"/api/paperless/tasks/{task_id}")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["task_id"], task_id)
+        self.assertEqual(payload["task_status"], "STARTED")
+        self.assertEqual(payload["task_file_name"], "Offer.pdf")
+        self.assertIsNone(payload["related_document"])
+
+    @patch("app.requests.get")
+    def test_get_paperless_task_status_returns_not_found_when_task_list_empty(self, mock_requests_get):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
+        fake_config_manager.get_user_token.return_value = "secret-token"
+
+        task_id = "cf13eea8-5c7a-40b8-aac8-bd8bdc315769"
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = []
+        mock_requests_get.return_value = mock_response
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get(f"/api/paperless/tasks/{task_id}")
+
+        self.assertEqual(response.status_code, 404)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["message"], "Task not found")
+
 
 class ApiDeviceConfigurationTests(unittest.TestCase):
     def setUp(self):
