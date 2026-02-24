@@ -239,6 +239,32 @@ class ConfigManager:
 
         return None
 
+    def get_device_scan_output_mode(
+        self, username: str, device_name: str | None = None
+    ) -> str:
+        selected_device_name = device_name or self.get_active_device_name(username)
+        if selected_device_name is None:
+            raise RuntimeError(
+                f"No device configured for user '{username}', cannot resolve scan_output_mode."
+            )
+
+        section_name = self._section_name_device(username, selected_device_name)
+        configured_mode = self._read_section_key(section_name, "scan_output_mode")
+        if configured_mode is None:
+            raise RuntimeError(
+                f"{section_name}.scan_output_mode is required and must be set to "
+                "'batch' or 'single_file'."
+            )
+
+        normalized_mode = configured_mode.strip().lower()
+        if normalized_mode not in {"batch", "single_file"}:
+            raise RuntimeError(
+                f"{section_name}.scan_output_mode={configured_mode} is invalid. "
+                "Use 'batch' or 'single_file'."
+            )
+
+        return normalized_mode
+
     def get_device_scan_timeout_seconds(
         self, username: str, device_name: str | None = None
     ) -> int | None:

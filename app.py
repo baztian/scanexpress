@@ -81,6 +81,10 @@ def _build_scan_command(
         resolved_device_id = _resolve_libusb_device_id(scanner_device)
         command.extend(["-d", resolved_device_id])
 
+    scan_output_mode = "batch"
+    if username is not None:
+        scan_output_mode = config_manager.get_device_scan_output_mode(username, device_name)
+
     for key in sorted(scanimage_params):
         option_name = key.strip().replace("_", "-")
         if not option_name:
@@ -91,8 +95,23 @@ def _build_scan_command(
         command.append(option_value)
 
     command.append("--format=tiff")
-    command.append(f"--batch={batch_output_pattern}")
+    if scan_output_mode == "single_file":
+        single_output_path = _build_single_output_tiff_path(batch_output_pattern)
+        command.append(f"--output-file={single_output_path}")
+    else:
+        command.append(f"--batch={batch_output_pattern}")
     return command
+
+
+def _resolve_scan_output_mode(username: str | None, device_name: str | None) -> str:
+    if username is None:
+        return "batch"
+    return get_config_manager().get_device_scan_output_mode(username, device_name)
+
+
+def _build_single_output_tiff_path(batch_output_pattern: Path) -> Path:
+    batch_stem = batch_output_pattern.stem.replace("%d", "")
+    return batch_output_pattern.parent / f"{batch_stem}.tiff"
 
 
 def _resolve_scan_device_details(
@@ -234,6 +253,7 @@ def _build_device_payload(
         "device_id": configured_device_id,
         "scanimage_device_name": scanimage_device_name,
         "scan_command": device_settings.get("scan_command"),
+        "scan_output_mode": device_settings.get("scan_output_mode"),
         "scan_timeout_seconds": device_settings.get("scan_timeout_seconds"),
         "effective_scan_timeout_seconds": effective_scan_timeout_seconds,
         "scanimage_params": config_manager.get_device_scanimage_params(
@@ -390,8 +410,12 @@ def _run_scan_command(
             stderr_message = "scanner command exited with a non-zero status"
         raise RuntimeError(f"Scanner command failed: {stderr_message}")
 
-    batch_stem = batch_output_pattern.stem.replace("%d", "")
-    output_tiff_paths = list(batch_output_pattern.parent.glob(f"{batch_stem}*.tiff"))
+    scan_output_mode = _resolve_scan_output_mode(username, device_name)
+    if scan_output_mode == "single_file":
+        output_tiff_paths = [_build_single_output_tiff_path(batch_output_pattern)]
+    else:
+        batch_stem = batch_output_pattern.stem.replace("%d", "")
+        output_tiff_paths = list(batch_output_pattern.parent.glob(f"{batch_stem}*.tiff"))
 
     def _extract_batch_index(path: Path) -> int:
         match = re.search(r"(\d+)(?=\.tiff$)", path.name)

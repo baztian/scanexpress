@@ -75,7 +75,9 @@ Quick validation:
 
 `POST /api/scan` now performs this pipeline:
 
-1. Execute scanner command using batch TIFF output (`--batch=/tmp/.../scan_output%d.tiff`)
+1. Execute scanner command using device-configured output mode:
+    - `scan_output_mode = batch` -> `--batch=/tmp/.../scan_output%d.tiff`
+    - `scan_output_mode = single_file` -> `--output-file=/tmp/.../scan_output.tiff`
 2. Convert all generated TIFF pages/files to a single PDF
 3. Upload PDF to Paperless-ngx `/api/documents/post_document/`
 
@@ -96,7 +98,7 @@ UI recent upload tracking:
 
 Configuration resolution is **config-first with env fallback**:
 
-- `config.ini` user + device sections are primary source for token, scan command, device id, and per-device scan timeout.
+- `config.ini` user + device sections are primary source for token, scan command, device id, per-device scan timeout, and scan output mode.
 - `config.ini` `:scanimage-params` subsection is the preferred source for scanner command options; keys are passed through dynamically as CLI args.
 - `config.ini` `[global]` is primary source for `paperless_base_url`, `scan_timeout_seconds`, and `paperless_timeout_seconds`.
 - `config.ini` `[global]` also defines `current_user`.
@@ -121,6 +123,11 @@ Dynamic scanner args from config:
 - Each key/value is passed to scanner as `--<key> <value>` (underscores become dashes).
 - Compatibility fallback: when `:scanimage-params` is absent, extra non-reserved keys in `[user:<username>:device:<device_name>]` are also passed as scanner args.
 - If no `device_id` is configured for the selected/default template, ScanExpress runs the scan command without the `-d` argument.
+
+Required scan output mode per device:
+
+- Each `[user:<username>:device:<device_name>]` section must define `scan_output_mode` as either `batch` or `single_file`.
+- `batch` and `single_file` map to mutually exclusive scanner flags (`--batch` vs `--output-file`).
 
 ## License
 

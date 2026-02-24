@@ -10,7 +10,7 @@ ScanExpress uses Python's built-in `configparser` module to manage multi-user sc
 - Multi-user support: each user has own token and device presets
 - Device templates: users can define and quickly switch between preset scanner configurations
 - Simple enough to edit manually; extensible to database-backed storage later
-- Environment variable fallback for backwards compatibility during transition
+- Environment variable override support for custom config file location
 
 ---
 
@@ -48,6 +48,7 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     [user:alice:device:brother-color]
     device_id = BrotherADS2200:libusb:001:002
     scan_command = /opt/scanexpress/scripts/scan_wrapper.sh
+    scan_output_mode = batch
     scan_timeout_seconds = 30
 
     [user:alice:device:brother-color:scanimage-params]
@@ -57,6 +58,7 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     [user:alice:device:brother-bw]
     device_id = BrotherADS2200:libusb:001:002
     scan_command = /opt/scanexpress/scripts/scan_wrapper.sh
+    scan_output_mode = batch
     scan_timeout_seconds = 30
 
     [user:alice:device:brother-bw:scanimage-params]
@@ -66,6 +68,7 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     [userbrother-:bob:device:canon-default]
     device_id = Canon:usb:123:brother --456
     scan_command = /usr/bin/scanimage
+    scan_output_mode = single_file
     scan_timeout_seconds = 40
 
     [user:bob:device:canon-default:scbrother-animage-params]
@@ -76,6 +79,9 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
 
 - `device_id` (optional): Device identifier passed to scanner command via `-d` flag. If unset, scanner command runs without `-d`.
 - `scan_command` (optional): Device-specific scan command. If not provided, backend defaults to `scanimage`.
+- `scan_output_mode` (required): Scanner output strategy. Allowed values:
+    - `batch`: use `--batch=<pattern>`
+    - `single_file`: use `--output-file=<path>`
 - `scan_timeout_seconds` (optional): Timeout per page during scanning for this device (integer seconds)
 
 Note: `scanimage` does not natively accept `...:libusb:/dev/<symlink>` device identifiers. This `/dev/...` form is a ScanExpress convenience syntax.
@@ -145,7 +151,7 @@ All keys in this section are passed through dynamically as scan command args:
 Fallback behavior:
 
 - If `:scanimage-params` section is missing, additional non-reserved keys from `[user:<username>:device:<device_name>]` are treated as scan command args.
-- Reserved keys in device section are not passed through as scanimage args: `device_id`, `scan_command`, `scan_timeout_seconds`.
+- Reserved keys in device section are not passed through as scanimage args: `device_id`, `scan_command`, `scan_output_mode`, `scan_timeout_seconds`.
 
 ---
 
@@ -166,6 +172,7 @@ Fallback behavior:
     [user:alice:device:brother-color]
     device_id = BrotherADS2200:libusb:001:002
     scan_command = /opt/scanexpress/scripts/scan_wrapper.sh
+    scan_output_mode = batch
     scan_timeout_seconds = 30
 
     [user:alice:device:brother-color:scanimage-params]
@@ -176,6 +183,7 @@ Fallback behavior:
     [user:alice:device:brother-bw]
     device_id = BrotherADS2200:libusb:001:002
     scan_command = /opt/scanexpress/scripts/scan_wrapper.sh
+    scan_output_mode = batch
     scan_timeout_seconds = 30
 
     [user:alice:device:brother-bw:scanimage-params]
@@ -188,6 +196,7 @@ Fallback behavior:
     [user:bob:device:canon-default]
     device_id = Canon:usb:123:456
     scan_command = /usr/bin/scanimage
+    scan_output_mode = single_file
     scan_timeout_seconds = 40
 
     [user:bob:device:canon-default:scanimage-params]

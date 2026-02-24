@@ -11,6 +11,7 @@ class BatchScanCommandTests(unittest.TestCase):
         fake_config_manager = Mock()
         fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_device_scan_output_mode.return_value = "batch"
         fake_config_manager.get_device_scanimage_params.return_value = {
             "resolution": "300",
             "mode": "Gray",
@@ -44,6 +45,7 @@ class BatchScanCommandTests(unittest.TestCase):
         fake_config_manager = Mock()
         fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
         fake_config_manager.get_device_id.return_value = None
+        fake_config_manager.get_device_scan_output_mode.return_value = "batch"
         fake_config_manager.get_device_scanimage_params.return_value = {"resolution": "300"}
 
         with patch("app.get_config_manager", return_value=fake_config_manager):
@@ -61,6 +63,7 @@ class BatchScanCommandTests(unittest.TestCase):
         fake_config_manager = Mock()
         fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:/dev/brother-scanner"
+        fake_config_manager.get_device_scan_output_mode.return_value = "batch"
         fake_config_manager.get_device_scanimage_params.return_value = {}
 
         with patch("app.get_config_manager", return_value=fake_config_manager), patch(
@@ -80,6 +83,7 @@ class BatchScanCommandTests(unittest.TestCase):
         fake_config_manager = Mock()
         fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:/dev/brother-scanner"
+        fake_config_manager.get_device_scan_output_mode.return_value = "batch"
         fake_config_manager.get_device_scanimage_params.return_value = {}
 
         with patch("app.get_config_manager", return_value=fake_config_manager), patch(
@@ -107,6 +111,24 @@ class BatchScanCommandTests(unittest.TestCase):
 
         self.assertEqual(configured_device_id, "BrotherADS2200:libusb:/dev/brother-scanner")
         self.assertEqual(scanimage_device_name, "BrotherADS2200:libusb:001:007")
+
+    def test_build_scan_command_uses_output_file_for_single_file_mode(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_device_scan_output_mode.return_value = "single_file"
+        fake_config_manager.get_device_scanimage_params.return_value = {"resolution": "300"}
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            command = scan_app._build_scan_command(
+                Path("/tmp/scan_output%d.tiff"),
+                username="alice",
+                device_name="flatbed",
+            )
+
+        self.assertIn("--format=tiff", command)
+        self.assertIn("--output-file=/tmp/scan_output.tiff", command)
+        self.assertNotIn("--batch=/tmp/scan_output%d.tiff", command)
 
     @patch("app.time.monotonic")
     @patch("app.select.select")
@@ -182,6 +204,7 @@ class BatchScanCommandTests(unittest.TestCase):
         fake_config_manager = Mock()
         fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_device_scan_output_mode.return_value = "batch"
         fake_config_manager.get_device_scanimage_params.return_value = {}
         fake_config_manager.get_device_scan_timeout_seconds.return_value = 1
 
@@ -197,6 +220,43 @@ class BatchScanCommandTests(unittest.TestCase):
 
         self.assertIn("timed out", str(context.exception))
         self.assertTrue(process.was_killed, "Process should be killed when timeout is reached")
+
+    @patch("app.time.monotonic")
+    @patch("app.select.select")
+    @patch("app.subprocess.Popen")
+    def test_run_scan_command_returns_single_output_file_for_single_file_mode(
+        self, mock_popen, mock_select, mock_monotonic
+    ):
+        mock_monotonic.side_effect = [0, 1, 2, 3, 4]
+        process = FakeProcess(
+            stderr_lines=[
+                "Scanning...\n",
+            ],
+            returncode=0,
+        )
+        mock_popen.return_value = process
+        mock_select.side_effect = lambda streams, _w, _x, _timeout: (
+            (streams, [], []) if not process.is_complete else (streams, [], [])
+        )
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_scan_command.return_value = "/usr/bin/scanimage"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_device_scan_output_mode.return_value = "single_file"
+        fake_config_manager.get_device_scanimage_params.return_value = {}
+        fake_config_manager.get_device_scan_timeout_seconds.return_value = 30
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                (temp_path / "scan_output.tiff").write_bytes(b"fake-tiff")
+
+                result_paths = scan_app._run_scan_command(
+                    temp_path / "scan_output%d.tiff",
+                    username="alice",
+                    device_name="flatbed",
+                )
+
+        self.assertEqual([path.name for path in result_paths], ["scan_output.tiff"])
 
 
 class PaperlessTimeoutTests(unittest.TestCase):

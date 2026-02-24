@@ -420,6 +420,92 @@ class ConfigManagerTests(unittest.TestCase):
         manager = ConfigManager(config_path)
         self.assertEqual(manager.get_paperless_base_url(), "https://paperless.example.com")
 
+    def test_get_device_scan_output_mode_reads_explicit_batch_mode(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = brother-color
+
+            [user:alice:device:brother-color]
+            device_id = scanner-1
+            scan_output_mode = batch
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(manager.get_device_scan_output_mode("alice", "brother-color"), "batch")
+
+    def test_get_device_scan_output_mode_reads_explicit_single_file_mode(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = flatbed
+
+            [user:alice:device:flatbed]
+            device_id = scanner-1
+            scan_output_mode = single_file
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(manager.get_device_scan_output_mode("alice", "flatbed"), "single_file")
+
+    def test_get_device_scan_output_mode_requires_explicit_value(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = flatbed
+
+            [user:alice:device:flatbed]
+            device_id = scanner-1
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        with self.assertRaises(RuntimeError) as context:
+            manager.get_device_scan_output_mode("alice", "flatbed")
+
+        self.assertIn("scan_output_mode", str(context.exception))
+
+    def test_get_device_scan_output_mode_rejects_invalid_value(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = flatbed
+
+            [user:alice:device:flatbed]
+            device_id = scanner-1
+            scan_output_mode = invalid-mode
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        with self.assertRaises(RuntimeError) as context:
+            manager.get_device_scan_output_mode("alice", "flatbed")
+
+        self.assertIn("scan_output_mode", str(context.exception))
+        self.assertIn("invalid-mode", str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
