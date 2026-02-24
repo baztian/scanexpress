@@ -12,7 +12,10 @@ let currentMessage = "idle";
 let currentStatsLines = [];
 let selectedDeviceBusy = false;
 let refreshingScanStatus = false;
+let refreshScanStatusPending = false;
+let refreshScanStatusRequestCounter = 0;
 let activeScanDeviceName = null;
+let localScanPhaseActive = false;
 const PAPERLESS_POLL_INTERVAL_MS = 2000;
 const PAPERLESS_MAX_RETRY_INTERVAL_MS = 15000;
 const MAX_RECENT_UPLOADS = 10;
@@ -51,7 +54,11 @@ function setStatus(status, message, statsLines = []) {
 }
 
 function isLocallyScanning() {
-  return activeScanDeviceName !== null;
+  return (
+    localScanPhaseActive
+    && activeScanDeviceName !== null
+    && selectedDeviceName === activeScanDeviceName
+  );
 }
 
 function updateScanButtonState() {
@@ -479,14 +486,29 @@ function applyDeviceConfigurations(payload) {
 }
 
 async function refreshScanStatus() {
-  if (!selectedDeviceName || refreshingScanStatus) {
+  if (!selectedDeviceName) {
+    selectedDeviceBusy = false;
+    updateScanButtonState();
     return;
   }
 
+  if (refreshingScanStatus) {
+    refreshScanStatusPending = true;
+    return;
+  }
+
+  const requestedDeviceName = selectedDeviceName;
+  const requestId = ++refreshScanStatusRequestCounter;
   refreshingScanStatus = true;
   try {
-    const params = new URLSearchParams({ device_name: selectedDeviceName });
+    const params = new URLSearchParams({ device_name: requestedDeviceName });
     const response = await fetch(`/api/scan/status?${params.toString()}`, { method: "GET" });
+
+    const isCurrentSelection = selectedDeviceName === requestedDeviceName;
+    const isLatestRequest = requestId === refreshScanStatusRequestCounter;
+    if (!isCurrentSelection || !isLatestRequest) {
+      return;
+    }
 
     if (!response.ok) {
       selectedDeviceBusy = false;
@@ -503,10 +525,19 @@ async function refreshScanStatus() {
       setStatus("busy", `scan in progress on ${lockId}`);
     }
   } catch (_error) {
-    selectedDeviceBusy = false;
-    updateScanButtonState();
+    if (
+      selectedDeviceName === requestedDeviceName
+      && requestId === refreshScanStatusRequestCounter
+    ) {
+      selectedDeviceBusy = false;
+      updateScanButtonState();
+    }
   } finally {
     refreshingScanStatus = false;
+    if (refreshScanStatusPending) {
+      refreshScanStatusPending = false;
+      void refreshScanStatus();
+    }
   }
 }
 
@@ -528,7 +559,9 @@ async function loadDeviceConfigurations() {
 
 async function selectDeviceConfiguration(deviceName) {
   selectedDeviceName = deviceName;
+  selectedDeviceBusy = activeScanDeviceName !== null && selectedDeviceName === activeScanDeviceName;
   renderDeviceDetails(deviceMap.get(selectedDeviceName) ?? null);
+  updateScanButtonState();
   setStatus("selected", selectedDeviceName);
   await refreshScanStatus();
 }
@@ -544,6 +577,8 @@ async function triggerScan() {
   scanButton.disabled = true;
   clearTimeoutCountdownState();
   activeScanDeviceName = selectedDeviceName;
+  localScanPhaseActive = true;
+  selectedDeviceBusy = true;
   setStatus("triggering", "triggering...");
 
   try {
@@ -593,9 +628,18 @@ async function triggerScan() {
         }
 
         const status = payload?.status ?? "unknown";
+        const streamComplete =
+          payload?.complete === true || status === "ok" || status === "error" || status === "busy";
+        if (status === "scanning") {
+          localScanPhaseActive = true;
+        } else if (status === "processing" || status === "uploading" || streamComplete) {
+          localScanPhaseActive = false;
+        }
         const presentation = buildStatusPresentation(payload);
         const nowMs = Date.now();
-        selectedDeviceBusy = status === "busy";
+        if (activeScanDeviceName && selectedDeviceName === activeScanDeviceName) {
+          selectedDeviceBusy = !streamComplete;
+        }
         applyTimeoutMetadata(payload);
         updatePhaseState(payload, status, nowMs);
         updateScanButtonState();
@@ -605,9 +649,11 @@ async function triggerScan() {
     }
   } catch (error) {
     clearTimeoutCountdownState();
+    localScanPhaseActive = false;
     setStatus("error", "error contacting backend");
   } finally {
     clearTimeoutCountdownState();
+    localScanPhaseActive = false;
     activeScanDeviceName = null;
     selectedDeviceBusy = false;
     updateScanButtonState();
