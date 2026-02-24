@@ -10,7 +10,7 @@ from queue import Queue
 from pathlib import Path
 
 import requests
-from flask import Flask, Response, jsonify, render_template, stream_with_context
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 from config import ConfigManager
 
 try:
@@ -101,6 +101,62 @@ def _resolve_scan_device_details(
 
     scanimage_device_name = _resolve_libusb_device_id(configured_device_id)
     return configured_device_id, scanimage_device_name
+
+
+def _build_device_payload(
+    config_manager: ConfigManager, username: str, device_name: str
+) -> dict:
+    device_settings = config_manager.get_user_device(username, device_name)
+    configured_device_id = device_settings.get("device_id")
+    scanimage_device_name = None
+    if configured_device_id is not None:
+        scanimage_device_name = _resolve_libusb_device_id(configured_device_id)
+
+    return {
+        "device_name": device_name,
+        "device_id": configured_device_id,
+        "scanimage_device_name": scanimage_device_name,
+        "scan_command": device_settings.get("scan_command"),
+        "scan_timeout_seconds": device_settings.get("scan_timeout_seconds"),
+        "scanimage_params": config_manager.get_device_scanimage_params(
+            username, device_name
+        ),
+    }
+
+
+def _build_device_configurations_payload() -> dict:
+    config_manager = get_config_manager()
+    username = config_manager.get_current_user()
+    device_names = config_manager.list_user_devices(username)
+    selected_device_name = config_manager.get_active_device_name(username)
+    devices = [
+        _build_device_payload(config_manager, username, device_name)
+        for device_name in device_names
+    ]
+
+    return {
+        "status": "ok",
+        "username": username,
+        "selected_device_name": selected_device_name,
+        "devices": devices,
+    }
+
+
+def _resolve_requested_device_name(
+    config_manager: ConfigManager,
+    username: str,
+    requested_device_name: str | None,
+) -> str | None:
+    configured_device_names = config_manager.list_user_devices(username)
+    if requested_device_name is None:
+        return config_manager.get_active_device_name(username)
+
+    if requested_device_name in configured_device_names:
+        return requested_device_name
+
+    raise RuntimeError(
+        f"Device '{requested_device_name}' is not configured for user '{username}'."
+    )
 
 
 def _parse_scan_progress_line(raw_line: str) -> dict | None:
@@ -349,10 +405,14 @@ def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | No
     return {}
 
 
-def _process_scan(progress_callback=None) -> dict:
+def _process_scan(progress_callback=None, requested_device_name: str | None = None) -> dict:
     config_manager = get_config_manager()
     username = config_manager.get_current_user()
-    device_name = config_manager.get_active_device_name(username)
+    device_name = _resolve_requested_device_name(
+        config_manager,
+        username,
+        requested_device_name,
+    )
     configured_device_id, scanimage_device_name = _resolve_scan_device_details(
         username, device_name
     )
@@ -417,9 +477,19 @@ def index():
 
 @app.post("/api/scan")
 def trigger_scan():
+    request_json = request.get_json(silent=True) or {}
+    requested_device_name = request_json.get("device_name")
+    if requested_device_name is not None and not isinstance(requested_device_name, str):
+        return (
+            jsonify({"status": "error", "message": "device_name must be a string."}),
+            400,
+        )
+
     try:
-        return jsonify(_process_scan()), 200
+        return jsonify(_process_scan(requested_device_name=requested_device_name)), 200
     except RuntimeError as exc:
+        if "not configured for user" in str(exc):
+            return jsonify({"status": "error", "message": str(exc)}), 400
         return jsonify({"status": "error", "message": str(exc)}), 500
     except Exception:
         app.logger.exception("Unexpected error while processing /api/scan")
@@ -436,6 +506,21 @@ def trigger_scan():
 
 @app.post("/api/scan/stream")
 def trigger_scan_stream():
+    request_json = request.get_json(silent=True) or {}
+    requested_device_name = request_json.get("device_name")
+    if requested_device_name is not None and not isinstance(requested_device_name, str):
+        return (
+            jsonify({"status": "error", "message": "device_name must be a string."}),
+            400,
+        )
+
+    config_manager = get_config_manager()
+    username = config_manager.get_current_user()
+    try:
+        _resolve_requested_device_name(config_manager, username, requested_device_name)
+    except RuntimeError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
     @stream_with_context
     def stream_scan_updates():
         updates_queue: Queue[dict | None] = Queue()
@@ -445,7 +530,7 @@ def trigger_scan_stream():
 
         def worker() -> None:
             try:
-                result = _process_scan(send_progress)
+                result = _process_scan(send_progress, requested_device_name=requested_device_name)
                 updates_queue.put({**result, "complete": True})
             except RuntimeError as exc:
                 updates_queue.put(
@@ -477,6 +562,25 @@ def trigger_scan_stream():
             yield f"{json.dumps(update)}\n"
 
     return Response(stream_scan_updates(), mimetype="application/x-ndjson")
+
+
+@app.get("/api/device-configurations")
+def list_device_configurations():
+    try:
+        return jsonify(_build_device_configurations_payload()), 200
+    except RuntimeError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 500
+    except Exception:
+        app.logger.exception("Unexpected error while processing /api/device-configurations")
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Unexpected backend error while loading device configurations.",
+                }
+            ),
+            500,
+        )
 
 
 if __name__ == "__main__":

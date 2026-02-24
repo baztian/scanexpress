@@ -132,7 +132,10 @@ class ConfigManager:
         devices = []
         for section_name in self._parser.sections():
             if section_name.startswith(prefix):
-                devices.append(section_name[len(prefix) :])
+                device_name = section_name[len(prefix) :]
+                if ":" in device_name:
+                    continue
+                devices.append(device_name)
         return sorted(devices)
 
     def get_active_device_name(self, username: str) -> str | None:

@@ -53,8 +53,26 @@ test("loads page with idle state", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "ScanExpress" })).toBeVisible();
+  await expect(page.getByLabel("Device configuration")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start Scan" })).toBeVisible();
   await expect(page.locator("#statusText")).toHaveText("Status: idle");
+});
+
+test("device configuration selector shows available devices and selected details", async ({ page }) => {
+  await page.goto("/");
+
+  const selector = page.getByLabel("Device configuration");
+  await expect(selector).toHaveValue("fake");
+  await expect(selector.locator("option")).toHaveCount(2);
+  await expect(page.locator("#deviceDetails")).toContainText("fake-device");
+  await expect(page.locator("#deviceDetails")).toContainText("Automatic Document Feeder");
+
+  await selector.selectOption("flatbed");
+
+  await expect(selector).toHaveValue("flatbed");
+  await expect(page.locator("#deviceDetails")).toContainText("flatbed-device");
+  await expect(page.locator("#deviceDetails")).toContainText("Flatbed");
+  await expect(page.locator("#statusText")).toHaveText("Status: selected (flatbed)");
 });
 
 test("clicking Start Scan runs backend with fake scanner and fake Paperless", async ({ page }) => {

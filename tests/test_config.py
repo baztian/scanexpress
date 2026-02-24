@@ -103,6 +103,28 @@ class ConfigManagerTests(unittest.TestCase):
 
         self.assertEqual(manager.list_user_devices("alice"), ["brother-bw", "brother-color"])
 
+    def test_list_user_devices_ignores_scanimage_params_subsections(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+
+            [user:alice:device:brother-color]
+            device_id = scanner-1
+
+            [user:alice:device:brother-color:scanimage-params]
+            mode = Color
+            resolution = 300
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(manager.list_user_devices("alice"), ["brother-color"])
+
     def test_get_user_device_returns_settings_dict(self):
         config_path = self._write_config(
             """

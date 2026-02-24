@@ -227,6 +227,77 @@ class ApiPayloadTests(unittest.TestCase):
         self.assertEqual(result["scanimage_device_name"], "BrotherADS2200:libusb:001:002")
 
 
+class ApiDeviceConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        scan_app.app.config["TESTING"] = True
+        self.client = scan_app.app.test_client()
+
+    def test_get_device_configurations_returns_available_and_selected_device_details(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.list_user_devices.return_value = ["brother-bw", "brother-color"]
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_user_device.side_effect = [
+            {
+                "device_id": "scanner-bw",
+                "scan_command": "/opt/scanexpress/scripts/scan_wrapper.sh",
+                "scan_timeout_seconds": "30",
+            },
+            {
+                "device_id": "scanner-color",
+                "scan_command": "/opt/scanexpress/scripts/scan_wrapper.sh",
+                "scan_timeout_seconds": "60",
+            },
+        ]
+        fake_config_manager.get_device_scanimage_params.side_effect = [
+            {"mode": "Gray", "resolution": "300"},
+            {"mode": "Color", "resolution": "200"},
+        ]
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get("/api/device-configurations")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["username"], "alice")
+        self.assertEqual(payload["selected_device_name"], "brother-bw")
+        self.assertEqual(len(payload["devices"]), 2)
+        self.assertEqual(payload["devices"][0]["device_name"], "brother-bw")
+        self.assertEqual(payload["devices"][0]["device_id"], "scanner-bw")
+        self.assertEqual(payload["devices"][0]["scanimage_params"]["mode"], "Gray")
+
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_post_scan_uses_requested_device_name(self, _mock_run_scan, _mock_convert, _mock_upload):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.list_user_devices.return_value = ["brother-bw", "brother-color"]
+        fake_config_manager.get_device_id.return_value = "scanner-color"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.post("/api/scan", json={"device_name": "brother-color"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["device_name"], "brother-color")
+
+    def test_post_scan_rejects_unknown_requested_device_name(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.list_user_devices.return_value = ["brother-bw"]
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.post("/api/scan", json={"device_name": "missing-device"})
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("not configured", payload["message"])
+
+
 @unittest.skipIf(scan_app.Image is None, "Pillow is required for conversion tests")
 class BatchTiffConversionTests(unittest.TestCase):
     def test_convert_tiffs_to_pdf_merges_files_and_counts_pages(self):
