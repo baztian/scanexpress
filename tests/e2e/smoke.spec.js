@@ -240,7 +240,7 @@ test("recent uploads shows task polling transition and success document link", a
 
   await page.route("**/api/scan/stream", async (route) => {
     const body =
-      '{"status":"ok","message":"Scan uploaded to Paperless-ngx. pages=1","paperless_task_id":"task-1","complete":true}\n';
+      '{"status":"ok","message":"Scan uploaded to Paperless-ngx. pages=1","paperless_task_id":"task-1","device_name":"flatbed","complete":true}\n';
     await route.fulfill({
       status: 200,
       contentType: "application/x-ndjson",
@@ -283,10 +283,12 @@ test("recent uploads shows task polling transition and success document link", a
   });
 
   await page.goto("/");
+  await page.getByLabel("Device configuration").selectOption("flatbed");
   await page.getByRole("button", { name: "Start Scan" }).click();
 
   await expect(page.getByRole("heading", { name: "Recent uploads" })).toBeVisible();
   await expect(page.locator("#recentUploadsList li").first()).toContainText("SUCCESS");
+  await expect(page.locator("#recentUploadsList li").first()).toContainText("flatbed");
 
   const successLink = page.locator("#recentUploadsList li a").first();
   await expect(successLink).toHaveAttribute("href", "http://127.0.0.1:18089/documents/21");

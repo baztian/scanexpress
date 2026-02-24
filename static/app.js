@@ -133,6 +133,7 @@ function upsertRecentTaskEntry(taskId, updates = {}) {
   const entry = {
     taskId,
     submittedAt: Date.now(),
+    deviceName: null,
     fileName: null,
     taskStatus: "STARTED",
     resultText: null,
@@ -164,12 +165,13 @@ function renderRecentUploads() {
   recentUploadsList.innerHTML = "";
   for (const entry of recentPaperlessTasks) {
     const item = document.createElement("li");
+    const deviceLabel = entry.deviceName ?? "unknown device";
     const fileLabel = entry.fileName ?? "unknown file";
     const statusLabel = entry.taskStatus ?? "unknown";
     const resultLabel = entry.lastError
       ? `poll_error: ${entry.lastError}`
       : (entry.resultText ?? "");
-    item.textContent = `${formatSubmittedAt(entry.submittedAt)} | ${fileLabel} | ${entry.taskId} | ${statusLabel}${resultLabel ? ` | ${resultLabel}` : ""}`;
+    item.textContent = `${formatSubmittedAt(entry.submittedAt)} | ${deviceLabel} | ${fileLabel} | ${entry.taskId} | ${statusLabel}${resultLabel ? ` | ${resultLabel}` : ""}`;
 
     if (entry.documentUrl) {
       item.append(" ");
@@ -290,8 +292,13 @@ function registerPaperlessTaskFromScanPayload(payload) {
   }
 
   const normalizedTaskId = taskId.trim();
+  const payloadDeviceName = typeof payload?.device_name === "string"
+    ? payload.device_name.trim()
+    : "";
+  const normalizedDeviceName = payloadDeviceName || activeScanDeviceName || selectedDeviceName || null;
   upsertRecentTaskEntry(normalizedTaskId, {
     submittedAt: Date.now(),
+    deviceName: normalizedDeviceName,
     taskStatus: "STARTED",
     resultText: null,
     relatedDocumentId: null,
