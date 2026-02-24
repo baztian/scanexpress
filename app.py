@@ -24,6 +24,9 @@ _CONFIG_MANAGER: ConfigManager | None = None
 _TIMEOUT_COUNTDOWN_START_SECONDS = 15
 _DEVICE_SCAN_LOCK = threading.Lock()
 _ACTIVE_DEVICE_SCANS: dict[str, dict[str, object]] = {}
+_PAPERLESS_UPLOAD_MAX_ATTEMPTS = 3
+_PAPERLESS_UPLOAD_RETRY_BASE_DELAY_SECONDS = 0.5
+_PAPERLESS_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class ScanInProgressError(RuntimeError):
@@ -651,26 +654,49 @@ def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | No
 
     headers = {"Authorization": f"Token {api_token}"}
 
-    try:
-        with pdf_path.open("rb") as pdf_file:
-            response = requests.post(
-                upload_url,
-                headers=headers,
-                files={"document": (pdf_path.name, pdf_file, "application/pdf")},
-                timeout=upload_timeout_seconds,
-            )
-    except requests.RequestException as exc:
-        raise RuntimeError(f"Paperless upload request failed: {exc}") from exc
+    response = None
+    for attempt in range(1, _PAPERLESS_UPLOAD_MAX_ATTEMPTS + 1):
+        try:
+            with pdf_path.open("rb") as pdf_file:
+                response = requests.post(
+                    upload_url,
+                    headers=headers,
+                    files={"document": (pdf_path.name, pdf_file, "application/pdf")},
+                    timeout=upload_timeout_seconds,
+                )
+        except requests.RequestException as exc:
+            if attempt >= _PAPERLESS_UPLOAD_MAX_ATTEMPTS:
+                raise RuntimeError(
+                    f"Paperless upload request failed: {exc}"
+                ) from exc
 
-    if response.status_code >= 400:
-        response_body = response.text.strip()
-        if len(response_body) > 300:
-            response_body = f"{response_body[:300]}..."
-        if not response_body:
-            response_body = response.reason or "unknown Paperless error"
-        raise RuntimeError(
-            f"Paperless upload failed ({response.status_code}): {response_body}"
-        )
+            retry_delay_seconds = _PAPERLESS_UPLOAD_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+            time.sleep(retry_delay_seconds)
+            continue
+
+        if response.status_code >= 400:
+            response_body = response.text.strip()
+            if len(response_body) > 300:
+                response_body = f"{response_body[:300]}..."
+            if not response_body:
+                response_body = response.reason or "unknown Paperless error"
+
+            if (
+                response.status_code in _PAPERLESS_RETRYABLE_STATUS_CODES
+                and attempt < _PAPERLESS_UPLOAD_MAX_ATTEMPTS
+            ):
+                retry_delay_seconds = _PAPERLESS_UPLOAD_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+                time.sleep(retry_delay_seconds)
+                continue
+
+            raise RuntimeError(
+                f"Paperless upload failed ({response.status_code}): {response_body}"
+            )
+
+        break
+
+    if response is None:
+        raise RuntimeError("Paperless upload failed before receiving a response.")
 
     try:
         parsed_body = response.json()

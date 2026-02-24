@@ -317,6 +317,41 @@ test("recent uploads shows task polling transition and success document link", a
   await expect(successLink).toHaveAttribute("target", "_blank");
 });
 
+test("recent uploads records permanent upload timeout as failure", async ({ page }) => {
+  await page.route("**/api/scan/stream", async (route) => {
+    const body = [
+      JSON.stringify({
+        status: "uploading",
+        message: "Uploading 1 page(s) to Paperless-ngx...",
+        page_count: 1,
+        paperless_timeout_seconds: 30,
+      }),
+      JSON.stringify({
+        status: "error",
+        message: "Paperless upload request failed: HTTPSConnectionPool(host='paperless.cloud.zonny.de', port=43443): Read timed out",
+        device_name: "flatbed",
+        complete: true,
+      }),
+    ].join("\n");
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson",
+      body: `${body}\n`,
+    });
+  });
+
+  await page.goto("/");
+  await page.locator('input[name="deviceConfig"][value="flatbed"]').check();
+  await page.getByRole("button", { name: "Start Scan" }).click();
+
+  const firstRow = page.locator("#recentUploadsBody tr").first();
+  await expect(firstRow).toContainText("FAILURE");
+  await expect(firstRow).toContainText("Read timed out");
+  await expect(firstRow).toContainText("flatbed");
+  await expect(firstRow.locator("a")).toHaveCount(0);
+});
+
 test("recent uploads keeps max 10 entries in newest-first order", async ({ page }) => {
   let sequence = 0;
 

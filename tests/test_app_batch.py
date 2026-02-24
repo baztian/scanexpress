@@ -266,6 +266,91 @@ class PaperlessTimeoutTests(unittest.TestCase):
         with patch("app.get_config_manager", return_value=fake_config_manager):
             self.assertEqual(scan_app._calculate_paperless_timeout_seconds(3, "alice"), 22)
 
+    @patch("app.time.sleep")
+    @patch("app.requests.post")
+    def test_upload_pdf_retries_after_timeout_and_then_succeeds(self, mock_post, mock_sleep):
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_token.return_value = "secret-token"
+        fake_config_manager.get_paperless_timeout_seconds.return_value = 5
+
+        success_response = Mock()
+        success_response.status_code = 200
+        success_response.json.return_value = {"id": 4242}
+
+        mock_post.side_effect = [
+            scan_app.requests.exceptions.ReadTimeout("Read timed out"),
+            success_response,
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = Path(temp_dir) / "scan_output.pdf"
+            pdf_path.write_bytes(b"fake-pdf")
+
+            with patch("app.get_config_manager", return_value=fake_config_manager), patch(
+                "app._build_paperless_upload_url", return_value="http://paperless/api/documents/post_document/"
+            ):
+                result = scan_app._upload_pdf_to_paperless(pdf_path, 1, "alice")
+
+        self.assertEqual(result, {"id": 4242})
+        self.assertEqual(mock_post.call_count, 2)
+        mock_sleep.assert_called_once()
+
+    @patch("app.time.sleep")
+    @patch("app.requests.post")
+    def test_upload_pdf_retries_after_transient_server_error_and_then_succeeds(
+        self, mock_post, mock_sleep
+    ):
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_token.return_value = "secret-token"
+        fake_config_manager.get_paperless_timeout_seconds.return_value = 5
+
+        transient_response = Mock()
+        transient_response.status_code = 503
+        transient_response.reason = "Service Unavailable"
+        transient_response.text = "busy"
+
+        success_response = Mock()
+        success_response.status_code = 200
+        success_response.json.return_value = {"id": 99}
+
+        mock_post.side_effect = [transient_response, success_response]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = Path(temp_dir) / "scan_output.pdf"
+            pdf_path.write_bytes(b"fake-pdf")
+
+            with patch("app.get_config_manager", return_value=fake_config_manager), patch(
+                "app._build_paperless_upload_url", return_value="http://paperless/api/documents/post_document/"
+            ):
+                result = scan_app._upload_pdf_to_paperless(pdf_path, 1, "alice")
+
+        self.assertEqual(result, {"id": 99})
+        self.assertEqual(mock_post.call_count, 2)
+        mock_sleep.assert_called_once()
+
+    @patch("app.time.sleep")
+    @patch("app.requests.post")
+    def test_upload_pdf_returns_error_after_retry_exhaustion(self, mock_post, mock_sleep):
+        fake_config_manager = Mock()
+        fake_config_manager.get_user_token.return_value = "secret-token"
+        fake_config_manager.get_paperless_timeout_seconds.return_value = 5
+
+        mock_post.side_effect = scan_app.requests.exceptions.ReadTimeout("Read timed out")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = Path(temp_dir) / "scan_output.pdf"
+            pdf_path.write_bytes(b"fake-pdf")
+
+            with patch("app.get_config_manager", return_value=fake_config_manager), patch(
+                "app._build_paperless_upload_url", return_value="http://paperless/api/documents/post_document/"
+            ):
+                with self.assertRaises(RuntimeError) as context:
+                    scan_app._upload_pdf_to_paperless(pdf_path, 1, "alice")
+
+        self.assertIn("Paperless upload request failed", str(context.exception))
+        self.assertEqual(mock_post.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)
+
 
 class ApiPayloadTests(unittest.TestCase):
     @patch("app.time.monotonic")

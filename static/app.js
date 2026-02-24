@@ -421,6 +421,65 @@ function registerPaperlessTaskFromScanPayload(payload) {
   scheduleTaskPolling(normalizedTaskId, 0);
 }
 
+function isPaperlessUploadFailureMessage(message) {
+  if (typeof message !== "string") {
+    return false;
+  }
+
+  return message.includes("Paperless upload request failed")
+    || message.includes("Paperless upload failed (");
+}
+
+function registerPaperlessUploadFailure(payload, options = {}) {
+  const status = payload?.status;
+  if (status !== "error") {
+    return options.existingFailureTaskId ?? null;
+  }
+
+  const message = typeof payload?.message === "string" ? payload.message.trim() : "";
+  if (!message) {
+    return options.existingFailureTaskId ?? null;
+  }
+
+  const phaseBeforeUpdate = options.phaseBeforeUpdate;
+  const uploadPhaseFailure = phaseBeforeUpdate === "uploading";
+  const messageIndicatesUploadFailure = isPaperlessUploadFailureMessage(message);
+  if (!uploadPhaseFailure && !messageIndicatesUploadFailure) {
+    return options.existingFailureTaskId ?? null;
+  }
+
+  const payloadTaskId = typeof payload?.paperless_task_id === "string"
+    ? payload.paperless_task_id.trim()
+    : "";
+  const taskId = payloadTaskId
+    || options.existingFailureTaskId
+    || `upload-failure-${Date.now()}`;
+  const payloadDeviceName = typeof payload?.device_name === "string"
+    ? payload.device_name.trim()
+    : "";
+  const deviceName = payloadDeviceName
+    || options.fallbackDeviceName
+    || activeScanDeviceName
+    || selectedDeviceName
+    || null;
+
+  upsertRecentTaskEntry(taskId, {
+    submittedAt: Date.now(),
+    deviceName,
+    taskStatus: "FAILURE",
+    resultText: message,
+    relatedDocumentId: null,
+    documentUrl: null,
+    isPolling: false,
+    lastError: null,
+    lastUpdatedAt: Date.now(),
+    pollFailureCount: 0,
+  });
+  stopTaskPolling(taskId);
+  renderRecentUploads();
+  return taskId;
+}
+
 function renderCurrentStatus() {
   if (statusText) {
     statusText.textContent = `Status: ${currentStatus} (${currentMessage}${formatTimeoutSuffix()})`;
@@ -926,6 +985,7 @@ async function triggerScan() {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let bufferedText = "";
+    let failureTaskId = null;
 
     while (true) {
       const { value, done } = await reader.read();
@@ -947,6 +1007,7 @@ async function triggerScan() {
         }
 
         const status = payload?.status ?? "unknown";
+        const phaseBeforeUpdate = timeoutState.phase;
         const streamComplete =
           payload?.complete === true || status === "ok" || status === "error" || status === "busy";
         if (status === "scanning") {
@@ -964,6 +1025,11 @@ async function triggerScan() {
         updateScanButtonState();
         setStatus(status, presentation.message, presentation.statsLines);
         registerPaperlessTaskFromScanPayload(payload);
+        failureTaskId = registerPaperlessUploadFailure(payload, {
+          phaseBeforeUpdate,
+          existingFailureTaskId: failureTaskId,
+          fallbackDeviceName: activeScanDeviceName || selectedDeviceName || null,
+        });
       }
     }
   } catch (error) {
