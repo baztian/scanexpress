@@ -57,23 +57,45 @@ test("loads page with idle state", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "ScanExpress" })).toBeVisible();
-  await expect(page.getByLabel("Device configuration")).toBeVisible();
+  await expect(page.getByText("Device configuration")).toBeVisible();
+  await expect(page.locator('input[name="deviceConfig"]')).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Start Scan" })).toBeVisible();
   await expect(page.locator("#statusText")).toHaveText("Status: idle");
+});
+
+test("scan controls appear above device selection", async ({ page }) => {
+  await page.goto("/");
+
+  const scanButton = page.getByRole("button", { name: "Start Scan" });
+  const deviceLegend = page.getByText("Device configuration", { exact: true });
+
+  const scanBox = await scanButton.boundingBox();
+  const deviceBox = await deviceLegend.boundingBox();
+
+  expect(scanBox).not.toBeNull();
+  expect(deviceBox).not.toBeNull();
+  expect(scanBox.y).toBeLessThan(deviceBox.y);
 });
 
 test("device configuration selector shows available devices and selected details", async ({ page }) => {
   await page.goto("/");
 
-  const selector = page.getByLabel("Device configuration");
-  await expect(selector).toHaveValue("fake");
-  await expect(selector.locator("option")).toHaveCount(2);
+  const fakeRadio = page.locator('input[name="deviceConfig"][value="fake"]');
+  const flatbedRadio = page.locator('input[name="deviceConfig"][value="flatbed"]');
+  await expect(fakeRadio).toBeChecked();
+  await expect(flatbedRadio).not.toBeChecked();
+
+  const detailsPanel = page.locator("#deviceDetailsPanel");
+  await expect(detailsPanel).not.toHaveAttribute("open", "");
+
+  await page.locator("#deviceDetailsSummary").click();
+  await expect(detailsPanel).toHaveAttribute("open", "");
   await expect(page.locator("#deviceDetails")).toContainText("fake-device");
   await expect(page.locator("#deviceDetails")).toContainText("Automatic Document Feeder");
 
-  await selector.selectOption("flatbed");
+  await flatbedRadio.check();
 
-  await expect(selector).toHaveValue("flatbed");
+  await expect(flatbedRadio).toBeChecked();
   await expect(page.locator("#deviceDetails")).toContainText("flatbed-device");
   await expect(page.locator("#deviceDetails")).toContainText("Flatbed");
   await expect(page.locator("#statusText")).toHaveText("Status: selected (flatbed)");
@@ -139,17 +161,17 @@ test("switching device while scan is running enables Start Scan for other device
   await page.goto("/");
 
   const scanButton = page.getByRole("button", { name: "Start Scan" });
-  const selector = page.getByLabel("Device configuration");
+  const flatbedRadio = page.locator('input[name="deviceConfig"][value="flatbed"]');
 
   await scanButton.click();
   await expect(scanButton).toBeDisabled();
 
-  await selector.selectOption("flatbed");
-  await expect(selector).toHaveValue("flatbed");
+  await flatbedRadio.check();
+  await expect(flatbedRadio).toBeChecked();
   await expect(scanButton).toBeEnabled();
 
   await expect(page.locator("#statusText")).toHaveText(/^Status: ok \(.+\)$/);
-  await expect(selector).toHaveValue("flatbed");
+  await expect(flatbedRadio).toBeChecked();
   await expect(scanButton).toBeEnabled();
 });
 
@@ -159,14 +181,14 @@ test("switching to another device during upload re-enables Start Scan", async ({
   await page.goto("/");
 
   const scanButton = page.getByRole("button", { name: "Start Scan" });
-  const selector = page.getByLabel("Device configuration");
+  const flatbedRadio = page.locator('input[name="deviceConfig"][value="flatbed"]');
 
   await scanButton.click();
   await expect(scanButton).toBeDisabled();
   await expect(page.locator("#statusText")).toHaveText(/Status: uploading \(.+\)/);
 
-  await selector.selectOption("flatbed");
-  await expect(selector).toHaveValue("flatbed");
+  await flatbedRadio.check();
+  await expect(flatbedRadio).toBeChecked();
   await expect(scanButton).toBeEnabled();
   await expect(page.locator("#statusText")).toHaveText(/^Status: ok \(.+\)$/);
 });
@@ -219,7 +241,7 @@ test("stale status response from previous device does not disable switched devic
   await page.goto("/");
 
   const scanButton = page.getByRole("button", { name: "Start Scan" });
-  const selector = page.getByLabel("Device configuration");
+  const flatbedRadio = page.locator('input[name="deviceConfig"][value="flatbed"]');
 
   await scanButton.click();
   await expect(page.locator("#statusText")).toHaveText(/Status: uploading \(.+\)/);
@@ -227,8 +249,8 @@ test("stale status response from previous device does not disable switched devic
   emulateFakeBusy = true;
   await expect.poll(() => fakeStatusCalls).toBeGreaterThan(0);
 
-  await selector.selectOption("flatbed");
-  await expect(selector).toHaveValue("flatbed");
+  await flatbedRadio.check();
+  await expect(flatbedRadio).toBeChecked();
   await expect(scanButton).toBeEnabled();
 
   await page.waitForTimeout(2500);
@@ -283,14 +305,14 @@ test("recent uploads shows task polling transition and success document link", a
   });
 
   await page.goto("/");
-  await page.getByLabel("Device configuration").selectOption("flatbed");
+  await page.locator('input[name="deviceConfig"][value="flatbed"]').check();
   await page.getByRole("button", { name: "Start Scan" }).click();
 
   await expect(page.getByRole("heading", { name: "Recent uploads" })).toBeVisible();
-  await expect(page.locator("#recentUploadsList li").first()).toContainText("SUCCESS");
-  await expect(page.locator("#recentUploadsList li").first()).toContainText("flatbed");
+  await expect(page.locator("#recentUploadsBody tr").first()).toContainText("SUCCESS");
+  await expect(page.locator("#recentUploadsBody tr").first()).toContainText("flatbed");
 
-  const successLink = page.locator("#recentUploadsList li a").first();
+  const successLink = page.locator("#recentUploadsBody tr a").first();
   await expect(successLink).toHaveAttribute("href", "http://127.0.0.1:18089/documents/21");
   await expect(successLink).toHaveAttribute("target", "_blank");
 });
@@ -339,7 +361,7 @@ test("recent uploads keeps max 10 entries in newest-first order", async ({ page 
     await expect(page.locator("#statusText")).toHaveText(/^Status: ok \(.+\)$/);
   }
 
-  const entries = page.locator("#recentUploadsList li");
+  const entries = page.locator("#recentUploadsBody tr");
   await expect(entries).toHaveCount(10);
   await expect(entries.first()).toContainText("task-11");
   await expect(entries.last()).toContainText("task-2");

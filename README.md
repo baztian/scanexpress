@@ -1,6 +1,6 @@
 # ScanExpress
 
-ScanExpress is a planned web app for triggering scanner jobs (for example a Brother ADS-2200 connected through a Raspberry Pi) from a browser, then sending scanned output to a Paperless-ngx server.
+ScanExpress is a web app for triggering scanner jobs (for example a Brother ADS-2200 connected through a Raspberry Pi) from a browser, then sending scanned output to a Paperless-ngx server.
 
 ## Design
 
@@ -12,6 +12,8 @@ ScanExpress is a planned web app for triggering scanner jobs (for example a Brot
 ## Development and Testing
 
 For local development setup, Playwright e2e smoke tests, and iterative deployment workflows, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+For current production UI requirements and acceptance criteria, see [docs/UI_FINALIZATION_SPEC.md](docs/UI_FINALIZATION_SPEC.md).
 
 ## Server Installation
 

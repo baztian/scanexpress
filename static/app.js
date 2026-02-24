@@ -1,9 +1,15 @@
 const scanButton = document.getElementById("scanButton");
 const statusText = document.getElementById("statusText");
 const statusStats = document.getElementById("statusStats");
-const deviceSelect = document.getElementById("deviceSelect");
+const flashTarget = document.body;
+const deviceConfigFieldset = document.getElementById("deviceConfigFieldset");
+const deviceRadioGroups = document.getElementById("deviceRadioGroups");
+const deviceDetailsPanel = document.getElementById("deviceDetailsPanel");
+const deviceDetailsSummary = document.getElementById("deviceDetailsSummary");
 const deviceDetails = document.getElementById("deviceDetails");
-const recentUploadsList = document.getElementById("recentUploadsList");
+const recentUploadsBody = document.getElementById("recentUploadsBody");
+const queryParams = new URLSearchParams(window.location.search);
+const isDemoMode = queryParams.get("demo") === "1";
 let deviceMap = new Map();
 let selectedDeviceName = null;
 let paperlessBaseUrl = "";
@@ -16,6 +22,9 @@ let refreshScanStatusPending = false;
 let refreshScanStatusRequestCounter = 0;
 let activeScanDeviceName = null;
 let localScanPhaseActive = false;
+let lastScanButtonDisabled = null;
+let lastScanButtonBusyOrScanning = false;
+let completionFlashDeviceName = null;
 const PAPERLESS_POLL_INTERVAL_MS = 2000;
 const PAPERLESS_MAX_RETRY_INTERVAL_MS = 15000;
 const MAX_RECENT_UPLOADS = 10;
@@ -61,10 +70,50 @@ function isLocallyScanning() {
   );
 }
 
+function triggerCompletionFlash() {
+  if (!flashTarget) {
+    return;
+  }
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion) {
+    flashTarget.classList.remove("scan-complete-flash-reduced");
+    void flashTarget.offsetWidth;
+    flashTarget.classList.add("scan-complete-flash-reduced");
+    window.setTimeout(() => {
+      flashTarget.classList.remove("scan-complete-flash-reduced");
+    }, 120);
+    return;
+  }
+
+  flashTarget.classList.remove("scan-complete-flash");
+  void flashTarget.offsetWidth;
+  flashTarget.classList.add("scan-complete-flash");
+  window.setTimeout(() => {
+    flashTarget.classList.remove("scan-complete-flash");
+  }, 2000);
+}
+
 function updateScanButtonState() {
   if (!scanButton) return;
   const noDeviceSelected = !selectedDeviceName;
-  scanButton.disabled = noDeviceSelected || selectedDeviceBusy || isLocallyScanning();
+  const busyOrScanning = selectedDeviceBusy || isLocallyScanning();
+  const nextDisabled = noDeviceSelected || busyOrScanning;
+  scanButton.disabled = nextDisabled;
+
+  if (
+    lastScanButtonDisabled === true
+    && nextDisabled === false
+    && lastScanButtonBusyOrScanning
+    && completionFlashDeviceName
+    && selectedDeviceName === completionFlashDeviceName
+  ) {
+    triggerCompletionFlash();
+    completionFlashDeviceName = null;
+  }
+
+  lastScanButtonDisabled = nextDisabled;
+  lastScanButtonBusyOrScanning = busyOrScanning;
 }
 
 function buildTimeoutSuffixForTarget(nowMs, targetState) {
@@ -119,6 +168,27 @@ function formatSubmittedAt(submittedAt) {
   }
 }
 
+function buildStatusChipClass(taskStatus) {
+  const normalized = String(taskStatus ?? "unknown").toLowerCase();
+  if (normalized === "started") return "task-status-chip task-status-started";
+  if (normalized === "pending") return "task-status-chip task-status-pending";
+  if (normalized === "success") return "task-status-chip task-status-success";
+  if (normalized === "failure") return "task-status-chip task-status-failure";
+  return "task-status-chip task-status-pending";
+}
+
+function formatTaskIdDisplay(taskId) {
+  if (typeof taskId !== "string") {
+    return "n/a";
+  }
+
+  if (taskId.length <= 14) {
+    return taskId;
+  }
+
+  return `${taskId.slice(0, 8)}…${taskId.slice(-4)}`;
+}
+
 function upsertRecentTaskEntry(taskId, updates = {}) {
   const existingIndex = recentPaperlessTasks.findIndex((entry) => entry.taskId === taskId);
   if (existingIndex >= 0) {
@@ -158,32 +228,71 @@ function upsertRecentTaskEntry(taskId, updates = {}) {
 }
 
 function renderRecentUploads() {
-  if (!recentUploadsList) {
+  if (!recentUploadsBody) {
     return;
   }
 
-  recentUploadsList.innerHTML = "";
+  recentUploadsBody.innerHTML = "";
+  if (recentPaperlessTasks.length === 0) {
+    const emptyRow = document.createElement("tr");
+    const emptyCell = document.createElement("td");
+    emptyCell.colSpan = 7;
+    emptyCell.textContent = "No recent uploads yet.";
+    emptyRow.appendChild(emptyCell);
+    recentUploadsBody.appendChild(emptyRow);
+    return;
+  }
+
   for (const entry of recentPaperlessTasks) {
-    const item = document.createElement("li");
-    const deviceLabel = entry.deviceName ?? "unknown device";
-    const fileLabel = entry.fileName ?? "unknown file";
+    const row = document.createElement("tr");
+    const submittedCell = document.createElement("td");
+    submittedCell.textContent = formatSubmittedAt(entry.submittedAt);
+
+    const deviceCell = document.createElement("td");
+    deviceCell.textContent = entry.deviceName ?? "unknown device";
+
+    const fileCell = document.createElement("td");
+    fileCell.textContent = entry.fileName ?? "unknown file";
+
+    const taskIdCell = document.createElement("td");
+    taskIdCell.className = "task-id";
+    taskIdCell.title = entry.taskId ?? "";
+    taskIdCell.textContent = formatTaskIdDisplay(entry.taskId);
+
+    const statusCell = document.createElement("td");
     const statusLabel = entry.taskStatus ?? "unknown";
+    const statusChip = document.createElement("span");
+    statusChip.className = buildStatusChipClass(statusLabel);
+    statusChip.textContent = statusLabel;
+    statusCell.appendChild(statusChip);
+
+    const resultCell = document.createElement("td");
     const resultLabel = entry.lastError
       ? `poll_error: ${entry.lastError}`
       : (entry.resultText ?? "");
-    item.textContent = `${formatSubmittedAt(entry.submittedAt)} | ${deviceLabel} | ${fileLabel} | ${entry.taskId} | ${statusLabel}${resultLabel ? ` | ${resultLabel}` : ""}`;
+    resultCell.textContent = resultLabel || "—";
+
+    const docCell = document.createElement("td");
 
     if (entry.documentUrl) {
-      item.append(" ");
       const link = document.createElement("a");
       link.href = entry.documentUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.textContent = "Open document";
-      item.appendChild(link);
+      docCell.appendChild(link);
+    } else {
+      docCell.textContent = "—";
     }
 
-    recentUploadsList.appendChild(item);
+    row.appendChild(submittedCell);
+    row.appendChild(deviceCell);
+    row.appendChild(fileCell);
+    row.appendChild(taskIdCell);
+    row.appendChild(statusCell);
+    row.appendChild(resultCell);
+    row.appendChild(docCell);
+    recentUploadsBody.appendChild(row);
   }
 }
 
@@ -461,21 +570,95 @@ function renderDeviceDetails(selectedDevice) {
   deviceDetails.textContent = detailLines.join("\n");
 }
 
-function renderDeviceSelect(deviceNames, selectedDeviceName) {
-  if (!deviceSelect) return;
-
-  deviceSelect.innerHTML = "";
-  for (const deviceName of deviceNames) {
-    const option = document.createElement("option");
-    option.value = deviceName;
-    option.textContent = deviceName;
-    if (deviceName === selectedDeviceName) {
-      option.selected = true;
-    }
-    deviceSelect.appendChild(option);
+function syncDeviceDetailsSummaryLabel() {
+  if (!deviceDetailsSummary || !deviceDetailsPanel) {
+    return;
   }
 
-  deviceSelect.disabled = deviceNames.length === 0;
+  deviceDetailsSummary.textContent = deviceDetailsPanel.open ? "Hide details" : "Show details";
+}
+
+function buildDeviceOptionSummary(selectedDevice) {
+  if (!selectedDevice || typeof selectedDevice !== "object") {
+    return "";
+  }
+
+  const params = selectedDevice.scanimage_params ?? {};
+  const mode = params.mode ? `${params.mode}` : null;
+  const resolution = params.resolution ? `${params.resolution}dpi` : null;
+  const source = params.source ? `${params.source}` : null;
+  return [mode, resolution, source].filter(Boolean).join(", ");
+}
+
+function renderDeviceRadioGroups(devices, selectedDeviceName) {
+  if (!deviceRadioGroups || !deviceConfigFieldset) {
+    return;
+  }
+
+  deviceRadioGroups.innerHTML = "";
+  if (!Array.isArray(devices) || devices.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "device-empty";
+    empty.textContent = "No device configurations available.";
+    deviceRadioGroups.appendChild(empty);
+    deviceConfigFieldset.disabled = true;
+    return;
+  }
+
+  const grouped = new Map();
+  for (const device of devices) {
+    const groupKey = device?.device_id || "unknown_device";
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, []);
+    }
+    grouped.get(groupKey).push(device);
+  }
+
+  for (const [deviceId, groupDevices] of grouped.entries()) {
+    const groupContainer = document.createElement("div");
+    groupContainer.className = "device-group";
+
+    const groupHeader = document.createElement("div");
+    groupHeader.className = "device-group-header";
+    groupHeader.textContent = deviceId;
+    groupContainer.appendChild(groupHeader);
+
+    for (const device of groupDevices) {
+      const optionId = `device-option-${device.device_name}`;
+      const optionRow = document.createElement("label");
+      optionRow.className = "device-option";
+      optionRow.htmlFor = optionId;
+
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "deviceConfig";
+      radio.id = optionId;
+      radio.value = device.device_name;
+      radio.checked = device.device_name === selectedDeviceName;
+
+      const textWrap = document.createElement("span");
+      const main = document.createElement("span");
+      main.className = "device-option-main";
+      main.textContent = device.device_name ?? "unnamed";
+      textWrap.appendChild(main);
+
+      const summary = buildDeviceOptionSummary(device);
+      if (summary) {
+        const meta = document.createElement("span");
+        meta.className = "device-option-meta";
+        meta.textContent = ` (${summary})`;
+        textWrap.appendChild(meta);
+      }
+
+      optionRow.appendChild(radio);
+      optionRow.appendChild(textWrap);
+      groupContainer.appendChild(optionRow);
+    }
+
+    deviceRadioGroups.appendChild(groupContainer);
+  }
+
+  deviceConfigFieldset.disabled = false;
 }
 
 function applyDeviceConfigurations(payload) {
@@ -486,10 +669,120 @@ function applyDeviceConfigurations(payload) {
     ? payload.paperless_base_url.replace(/\/$/, "")
     : "";
 
-  const deviceNames = devices.map((device) => device.device_name);
-  renderDeviceSelect(deviceNames, selectedDeviceName);
+  const hasSelectedDevice = selectedDeviceName && deviceMap.has(selectedDeviceName);
+  if (!hasSelectedDevice) {
+    selectedDeviceName = devices[0]?.device_name ?? null;
+  }
+  renderDeviceRadioGroups(devices, selectedDeviceName);
   renderDeviceDetails(deviceMap.get(selectedDeviceName) ?? null);
   updateScanButtonState();
+}
+
+function loadDemoData() {
+  applyDeviceConfigurations({
+    selected_device_name: "duplex_bw",
+    paperless_base_url: "https://paperless.example.local",
+    devices: [
+      {
+        device_name: "default",
+        device_id: "brother_ads_2200",
+        scanimage_device_name: "brother_ads_2200",
+        scan_command: "scanimage",
+        scan_timeout_seconds: "90",
+        scanimage_params: {
+          mode: "Color",
+          resolution: "300",
+          source: "Automatic Document Feeder",
+        },
+      },
+      {
+        device_name: "duplex_bw",
+        device_id: "brother_ads_2200",
+        scanimage_device_name: "brother_ads_2200",
+        scan_command: "scanimage",
+        scan_timeout_seconds: "90",
+        scanimage_params: {
+          mode: "Gray",
+          resolution: "300",
+          source: "Automatic Document Feeder",
+          batch: "yes",
+        },
+      },
+      {
+        device_name: "receipt_mode",
+        device_id: "fujitsu_ix500",
+        scanimage_device_name: "fujitsu_ix500",
+        scan_command: "scanimage",
+        scan_timeout_seconds: "60",
+        scanimage_params: {
+          mode: "Gray",
+          resolution: "200",
+          source: "Flatbed",
+        },
+      },
+    ],
+  });
+
+  upsertRecentTaskEntry("task-demo-success", {
+    submittedAt: Date.now() - 3 * 60 * 1000,
+    deviceName: "duplex_bw",
+    fileName: "invoice_2026-02.pdf",
+    taskStatus: "SUCCESS",
+    resultText: "Success. New document id 48 created",
+    relatedDocumentId: "48",
+    documentUrl: "https://paperless.example.local/documents/48",
+    isPolling: false,
+    pollFailureCount: 0,
+  });
+
+  upsertRecentTaskEntry("task-demo-pending", {
+    submittedAt: Date.now() - 40 * 1000,
+    deviceName: "default",
+    fileName: "delivery_note_2026-02.pdf",
+    taskStatus: "PENDING",
+    resultText: "Queued in Paperless task worker",
+    isPolling: true,
+    pollFailureCount: 0,
+  });
+
+  upsertRecentTaskEntry("task-demo-failure", {
+    submittedAt: Date.now() - 8 * 60 * 1000,
+    deviceName: "receipt_mode",
+    fileName: "receipt_batch_12.pdf",
+    taskStatus: "FAILURE",
+    resultText: "OCR pipeline failed: unsupported encoding",
+    isPolling: false,
+    pollFailureCount: 0,
+  });
+
+  renderRecentUploads();
+  setStatus("idle", "demo mode loaded");
+
+  window.setTimeout(() => {
+    upsertRecentTaskEntry("task-demo-pending", {
+      taskStatus: "STARTED",
+      resultText: "Processing in Paperless worker",
+      isPolling: true,
+      lastError: null,
+      relatedDocumentId: null,
+      documentUrl: null,
+      lastUpdatedAt: Date.now(),
+    });
+    renderRecentUploads();
+  }, 1800);
+
+  window.setTimeout(() => {
+    upsertRecentTaskEntry("task-demo-pending", {
+      taskStatus: "SUCCESS",
+      resultText: "Success. New document id 57 created",
+      relatedDocumentId: "57",
+      documentUrl: "https://paperless.example.local/documents/57",
+      isPolling: false,
+      lastError: null,
+      lastUpdatedAt: Date.now(),
+    });
+    renderRecentUploads();
+  }, 3600);
 }
 
 async function refreshScanStatus() {
@@ -575,17 +868,33 @@ async function selectDeviceConfiguration(deviceName) {
 
 async function triggerScan() {
   if (!statusText || !scanButton) return;
+  if (isDemoMode) {
+    completionFlashDeviceName = selectedDeviceName;
+    localScanPhaseActive = true;
+    selectedDeviceBusy = true;
+    updateScanButtonState();
+    setStatus("triggering", "triggering...");
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 450);
+    });
+    localScanPhaseActive = false;
+    selectedDeviceBusy = false;
+    updateScanButtonState();
+    setStatus("ok", "demo scan complete");
+    return;
+  }
   if (selectedDeviceBusy) {
     setStatus("busy", "scan in progress for selected device");
     updateScanButtonState();
     return;
   }
 
-  scanButton.disabled = true;
   clearTimeoutCountdownState();
   activeScanDeviceName = selectedDeviceName;
+  completionFlashDeviceName = selectedDeviceName;
   localScanPhaseActive = true;
   selectedDeviceBusy = true;
+  updateScanButtonState();
   setStatus("triggering", "triggering...");
 
   try {
@@ -608,6 +917,9 @@ async function triggerScan() {
       }
 
       setStatus(response.status === 409 ? "busy" : "error", message);
+      if (response.status === 409) {
+        completionFlashDeviceName = null;
+      }
       return;
     }
 
@@ -672,18 +984,32 @@ if (scanButton) {
   scanButton.addEventListener("click", triggerScan);
 }
 
-if (deviceSelect) {
-  deviceSelect.addEventListener("change", async (event) => {
-    const nextDeviceName = event?.target?.value;
+if (deviceRadioGroups) {
+  deviceRadioGroups.addEventListener("change", async (event) => {
+    const target = event?.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.name !== "deviceConfig") return;
+    const nextDeviceName = target.value;
     if (!nextDeviceName) return;
     await selectDeviceConfiguration(nextDeviceName);
   });
 }
 
+if (deviceDetailsPanel) {
+  deviceDetailsPanel.addEventListener("toggle", syncDeviceDetailsSummaryLabel);
+}
+
+syncDeviceDetailsSummaryLabel();
+
 setInterval(() => {
   if (!selectedDeviceName) return;
   if (isLocallyScanning()) return;
+  if (isDemoMode) return;
   void refreshScanStatus();
 }, 5000);
 
-void loadDeviceConfigurations();
+if (isDemoMode) {
+  loadDemoData();
+} else {
+  void loadDeviceConfigurations();
+}

@@ -4,21 +4,53 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ScanExpress</title>
+    <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
-    <main>
-      <h1>ScanExpress</h1>
-      <p>Simple Flask scaffold is ready.</p>
-      <label for="deviceSelect">Device configuration</label>
-      <select id="deviceSelect" name="deviceSelect"></select>
-      <p id="deviceConfigText">Configured device details:</p>
-      <pre id="deviceDetails">No device selected.</pre>
-      <button id="scanButton" type="button">Start Scan</button>
-      <p id="statusText">Status: idle</p>
-      <small id="statusStats" style="display: block; font-size: 0.85em; line-height: 1.4; white-space: pre-line;"></small>
-      <section>
-        <h2>Recent uploads</h2>
-        <ul id="recentUploadsList"></ul>
+    <main id="appShell" class="app-shell">
+      <header class="app-header">
+        <h1>ScanExpress</h1>
+        <p class="subtitle">Scan locally and send documents to Paperless-ngx.</p>
+      </header>
+
+      <section class="panel action-panel">
+        <button id="scanButton" type="button">Start Scan</button>
+        <div class="status-wrap">
+          <p id="statusText">Status: idle</p>
+          <small id="statusStats"></small>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel-title">Scan configuration</h2>
+        <fieldset id="deviceConfigFieldset" class="device-fieldset">
+          <legend>Device configuration</legend>
+          <div id="deviceRadioGroups" class="device-radio-groups"></div>
+        </fieldset>
+        <details id="deviceDetailsPanel" class="device-details-panel">
+          <summary id="deviceDetailsSummary" class="muted-label">Show details</summary>
+          <pre id="deviceDetails">No device selected.</pre>
+        </details>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel-title">Recent uploads</h2>
+        <div class="table-wrap">
+          <table class="recent-table" aria-label="Recent scans">
+            <thead>
+              <tr>
+                <th scope="col">Submitted</th>
+                <th scope="col">Device/config</th>
+                <th scope="col">File name</th>
+                <th scope="col">Task ID</th>
+                <th scope="col">Status</th>
+                <th scope="col">Result</th>
+                <th scope="col">Document</th>
+              </tr>
+            </thead>
+            <tbody id="recentUploadsBody"></tbody>
+          </table>
+        </div>
       </section>
     </main>
     <script src="/static/app.js"></script>
