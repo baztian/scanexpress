@@ -21,6 +21,7 @@ except ImportError:
 
 app = Flask(__name__)
 _CONFIG_MANAGER: ConfigManager | None = None
+_TIMEOUT_COUNTDOWN_START_SECONDS = 15
 
 
 def get_config_manager() -> ConfigManager:
@@ -111,6 +112,7 @@ def _build_device_payload(
     scanimage_device_name = None
     if configured_device_id is not None:
         scanimage_device_name = _resolve_libusb_device_id(configured_device_id)
+    effective_scan_timeout_seconds = _resolve_scan_timeout_seconds(username, device_name)
 
     return {
         "device_name": device_name,
@@ -118,6 +120,7 @@ def _build_device_payload(
         "scanimage_device_name": scanimage_device_name,
         "scan_command": device_settings.get("scan_command"),
         "scan_timeout_seconds": device_settings.get("scan_timeout_seconds"),
+        "effective_scan_timeout_seconds": effective_scan_timeout_seconds,
         "scanimage_params": config_manager.get_device_scanimage_params(
             username, device_name
         ),
@@ -206,13 +209,7 @@ def _run_scan_command(
     device_name: str | None = None,
 ) -> list[Path]:
     command = _build_scan_command(batch_output_pattern, username, device_name)
-    scan_timeout_seconds_per_page = None
-    if username is not None:
-        scan_timeout_seconds_per_page = get_config_manager().get_device_scan_timeout_seconds(
-            username, device_name
-        )
-    if scan_timeout_seconds_per_page is None:
-        scan_timeout_seconds_per_page = 30
+    scan_timeout_seconds_per_page = _resolve_scan_timeout_seconds(username, device_name)
 
     try:
         process = subprocess.Popen(
@@ -240,7 +237,8 @@ def _run_scan_command(
             [process.stderr], [], [], 1
         )
         if not ready_streams:
-            if time.monotonic() - last_page_progress_at > scan_timeout_seconds_per_page:
+            elapsed_without_page_progress = time.monotonic() - last_page_progress_at
+            if elapsed_without_page_progress > scan_timeout_seconds_per_page:
                 process.kill()
                 process.wait()
                 raise RuntimeError(
@@ -361,6 +359,17 @@ def _calculate_paperless_timeout_seconds(page_count: int, username: str | None =
     )
 
 
+def _resolve_scan_timeout_seconds(username: str | None, device_name: str | None = None) -> int:
+    scan_timeout_seconds_per_page = None
+    if username is not None:
+        scan_timeout_seconds_per_page = get_config_manager().get_device_scan_timeout_seconds(
+            username, device_name
+        )
+    if not isinstance(scan_timeout_seconds_per_page, int) or scan_timeout_seconds_per_page <= 0:
+        return 30
+    return scan_timeout_seconds_per_page
+
+
 def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | None = None) -> dict:
     if username is None:
         raise RuntimeError("username is required for Paperless upload.")
@@ -416,6 +425,7 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
     configured_device_id, scanimage_device_name = _resolve_scan_device_details(
         username, device_name
     )
+    scan_timeout_seconds = _resolve_scan_timeout_seconds(username, device_name)
 
     with tempfile.TemporaryDirectory(prefix="scanexpress-") as working_dir:
         working_dir_path = Path(working_dir)
@@ -423,7 +433,14 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
         pdf_path = working_dir_path / "scan_output.pdf"
 
         if progress_callback is not None:
-            progress_callback({"status": "scanning", "message": "Starting scan..."})
+            progress_callback(
+                {
+                    "status": "scanning",
+                    "message": "Starting scan...",
+                    "scan_timeout_seconds": scan_timeout_seconds,
+                    "timeout_countdown_start_seconds": _TIMEOUT_COUNTDOWN_START_SECONDS,
+                }
+            )
 
         tiff_paths = _run_scan_command(
             batch_output_pattern,
@@ -443,11 +460,14 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
         page_count = _convert_tiffs_to_pdf(tiff_paths, pdf_path)
 
         if progress_callback is not None:
+            paperless_timeout_seconds = _calculate_paperless_timeout_seconds(page_count, username)
             progress_callback(
                 {
                     "status": "uploading",
                     "message": f"Uploading {page_count} page(s) to Paperless-ngx...",
                     "page_count": page_count,
+                    "paperless_timeout_seconds": paperless_timeout_seconds,
+                    "timeout_countdown_start_seconds": _TIMEOUT_COUNTDOWN_START_SECONDS,
                 }
             )
 

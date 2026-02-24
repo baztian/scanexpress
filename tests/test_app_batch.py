@@ -196,6 +196,7 @@ class BatchScanCommandTests(unittest.TestCase):
                     )
 
         self.assertIn("timed out", str(context.exception))
+        self.assertTrue(process.was_killed, "Process should be killed when timeout is reached")
 
 
 class PaperlessTimeoutTests(unittest.TestCase):
