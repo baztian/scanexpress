@@ -19,6 +19,19 @@ To test the full `/api/scan` flow locally (TIFF→PDF conversion), also install 
 
 Developer note: production default config path is `/etc/scanexpress.conf`. For local non-root development, use `SCANEXPRESS_CONFIG_FILE` to point to a writable test file (for example `tests/e2e/test_config.ini`).
 
+## Python Unit Tests
+
+Run unit tests with the repository virtual environment so Flask and other Python dependencies resolve correctly.
+
+Preferred (works even without activating the venv):
+
+    .venv/bin/python -m unittest tests/test_config.py tests/test_app_batch.py
+
+Alternative (after activation):
+
+    source .venv/bin/activate
+    python -m unittest tests/test_config.py tests/test_app_batch.py
+
 ## Playwright Smoke Tests
 
 Install Node dependencies and Playwright browser binaries:

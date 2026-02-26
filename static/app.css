@@ -198,6 +198,39 @@ a:focus-visible {
   gap: 12px;
 }
 
+.filename-control {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+}
+
+.filename-control > label {
+  font-weight: 600;
+}
+
+#filenameInput {
+  width: 100%;
+  font: inherit;
+  border: 1px solid #cddbcc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  color: var(--paperless-text);
+}
+
+#filenameInput:focus-visible {
+  outline: 2px solid var(--paperless-green-accent);
+  outline-offset: 2px;
+}
+
+#filenameInput.input-error {
+  border-color: #dc2626;
+}
+
+#filenameInput.input-error:focus-visible {
+  outline-color: #dc2626;
+}
+
 button#scanButton {
   justify-self: start;
   border: 0;

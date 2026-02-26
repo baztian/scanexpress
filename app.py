@@ -1,4 +1,5 @@
 import json
+import random
 import re
 import select
 import shlex
@@ -27,6 +28,8 @@ _ACTIVE_DEVICE_SCANS: dict[str, dict[str, object]] = {}
 _PAPERLESS_UPLOAD_MAX_ATTEMPTS = 3
 _PAPERLESS_UPLOAD_RETRY_BASE_DELAY_SECONDS = 0.5
 _PAPERLESS_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+_BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_DEFAULT_FILENAME_TEMPLATE = "scan_{scan_uuid}"
 
 
 class ScanInProgressError(RuntimeError):
@@ -38,6 +41,73 @@ def get_config_manager() -> ConfigManager:
     if _CONFIG_MANAGER is None:
         _CONFIG_MANAGER = ConfigManager()
     return _CONFIG_MANAGER
+
+
+def _encode_base62(value: int) -> str:
+    if value < 0:
+        raise ValueError("base62 input must be non-negative")
+
+    if value == 0:
+        return _BASE62_ALPHABET[0]
+
+    encoded = []
+    base = len(_BASE62_ALPHABET)
+    while value > 0:
+        value, remainder = divmod(value, base)
+        encoded.append(_BASE62_ALPHABET[remainder])
+
+    encoded.reverse()
+    return "".join(encoded)
+
+
+def _generate_base62_id() -> str:
+    timestamp_microseconds = int(time.time() * 1_000_000)
+    base62_timestamp = _encode_base62(timestamp_microseconds)
+    random_part_int = random.randint(0, len(_BASE62_ALPHABET) ** 2 - 1)
+    random_base62 = _encode_base62(random_part_int)
+    padded_random_base62 = random_base62.zfill(2)
+    return f"{base62_timestamp}{padded_random_base62}"
+
+
+def _resolve_filename_template(config_manager: ConfigManager) -> str:
+    configured_template = config_manager.get_filename_template()
+    if not isinstance(configured_template, str) or configured_template.strip() == "":
+        return _DEFAULT_FILENAME_TEMPLATE
+
+    has_scan_uuid_placeholder = "{scan_uuid}" in configured_template
+    has_base62_id_placeholder = "{base62_id}" in configured_template
+    if not has_scan_uuid_placeholder and not has_base62_id_placeholder:
+        return _DEFAULT_FILENAME_TEMPLATE
+
+    return configured_template
+
+
+def _build_default_filename_base(config_manager: ConfigManager) -> str:
+    template = _resolve_filename_template(config_manager)
+    scan_uuid = _generate_base62_id()
+    return template.format(scan_uuid=scan_uuid, base62_id=scan_uuid)
+
+
+def _normalize_filename_base(
+    filename_base: str | None,
+    config_manager: ConfigManager,
+) -> str:
+    if filename_base is None:
+        normalized_basename = _build_default_filename_base(config_manager)
+    else:
+        normalized_basename = filename_base.strip()
+        normalized_basename = re.sub(r"(?:\.pdf)+$", "", normalized_basename, flags=re.IGNORECASE)
+
+    if normalized_basename == "":
+        raise RuntimeError("Filename cannot be empty")
+
+    return normalized_basename
+
+
+def _is_empty_filename_input(filename_base: str) -> bool:
+    normalized_basename = filename_base.strip()
+    normalized_basename = re.sub(r"(?:\.pdf)+$", "", normalized_basename, flags=re.IGNORECASE)
+    return normalized_basename == ""
 
 
 def _resolve_libusb_device_id(scanner_device: str) -> str:
@@ -211,7 +281,9 @@ def _build_scan_status_payload(requested_device_name: str | None = None) -> dict
 
 
 def _process_scan_with_device_lock(
-    progress_callback=None, requested_device_name: str | None = None
+    progress_callback=None,
+    requested_device_name: str | None = None,
+    filename_base: str | None = None,
 ) -> dict:
     config_manager = get_config_manager()
     username = config_manager.get_current_user()
@@ -236,6 +308,7 @@ def _process_scan_with_device_lock(
         return _process_scan(
             progress_callback=progress_callback,
             requested_device_name=device_name,
+            filename_base=filename_base,
         )
     finally:
         _release_device_scan_lock(device_lock_id)
@@ -284,6 +357,7 @@ def _build_device_configurations_payload() -> dict:
         "username": username,
         "selected_device_name": selected_device_name,
         "paperless_base_url": paperless_base_url,
+        "default_filename_base": _build_default_filename_base(config_manager),
         "devices": devices,
     }
 
@@ -712,7 +786,11 @@ def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | No
     return {}
 
 
-def _process_scan(progress_callback=None, requested_device_name: str | None = None) -> dict:
+def _process_scan(
+    progress_callback=None,
+    requested_device_name: str | None = None,
+    filename_base: str | None = None,
+) -> dict:
     config_manager = get_config_manager()
     username = config_manager.get_current_user()
     device_name = _resolve_requested_device_name(
@@ -724,12 +802,14 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
         username, device_name
     )
     scan_timeout_seconds = _resolve_scan_timeout_seconds(username, device_name)
+    normalized_filename_base = _normalize_filename_base(filename_base, config_manager)
+    output_filename = f"{normalized_filename_base}.pdf"
     total_started_at = time.monotonic()
 
     with tempfile.TemporaryDirectory(prefix="scanexpress-") as working_dir:
         working_dir_path = Path(working_dir)
         batch_output_pattern = working_dir_path / "scan_output%d.tiff"
-        pdf_path = working_dir_path / "scan_output.pdf"
+        pdf_path = working_dir_path / output_filename
 
         if progress_callback is not None:
             progress_callback(
@@ -800,6 +880,8 @@ def _process_scan(progress_callback=None, requested_device_name: str | None = No
     return {
         "status": "ok",
         "message": message,
+        "filename_base": normalized_filename_base,
+        "filename": output_filename,
         "document_id": document_id,
         "page_count": page_count,
         "username": username,
@@ -820,21 +902,34 @@ def index():
 def trigger_scan():
     request_json = request.get_json(silent=True) or {}
     requested_device_name = request_json.get("device_name")
+    filename_base = request_json.get("filename_base")
     if requested_device_name is not None and not isinstance(requested_device_name, str):
         return (
             jsonify({"status": "error", "message": "device_name must be a string."}),
             400,
         )
+    if filename_base is not None and not isinstance(filename_base, str):
+        return (
+            jsonify({"status": "error", "message": "filename_base must be a string."}),
+            400,
+        )
+    if isinstance(filename_base, str) and _is_empty_filename_input(filename_base):
+        return jsonify({"status": "error", "message": "Filename cannot be empty"}), 400
 
     try:
         return (
-            jsonify(_process_scan_with_device_lock(requested_device_name=requested_device_name)),
+            jsonify(
+                _process_scan_with_device_lock(
+                    requested_device_name=requested_device_name,
+                    filename_base=filename_base,
+                )
+            ),
             200,
         )
     except ScanInProgressError as exc:
         return jsonify({"status": "busy", "message": str(exc)}), 409
     except RuntimeError as exc:
-        if "not configured for user" in str(exc):
+        if "not configured for user" in str(exc) or str(exc) == "Filename cannot be empty":
             return jsonify({"status": "error", "message": str(exc)}), 400
         return jsonify({"status": "error", "message": str(exc)}), 500
     except Exception:
@@ -854,11 +949,19 @@ def trigger_scan():
 def trigger_scan_stream():
     request_json = request.get_json(silent=True) or {}
     requested_device_name = request_json.get("device_name")
+    filename_base = request_json.get("filename_base")
     if requested_device_name is not None and not isinstance(requested_device_name, str):
         return (
             jsonify({"status": "error", "message": "device_name must be a string."}),
             400,
         )
+    if filename_base is not None and not isinstance(filename_base, str):
+        return (
+            jsonify({"status": "error", "message": "filename_base must be a string."}),
+            400,
+        )
+    if isinstance(filename_base, str) and _is_empty_filename_input(filename_base):
+        return jsonify({"status": "error", "message": "Filename cannot be empty"}), 400
 
     config_manager = get_config_manager()
     username = config_manager.get_current_user()
@@ -906,6 +1009,7 @@ def trigger_scan_stream():
                 result = _process_scan_with_device_lock(
                     send_progress,
                     requested_device_name=device_name,
+                    filename_base=filename_base,
                 )
                 updates_queue.put({**result, "complete": True})
             except ScanInProgressError as exc:

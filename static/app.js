@@ -8,6 +8,7 @@ const deviceDetailsPanel = document.getElementById("deviceDetailsPanel");
 const deviceDetailsSummary = document.getElementById("deviceDetailsSummary");
 const deviceDetails = document.getElementById("deviceDetails");
 const recentUploadsBody = document.getElementById("recentUploadsBody");
+const filenameInput = document.getElementById("filenameInput");
 const queryParams = new URLSearchParams(window.location.search);
 const isDemoMode = queryParams.get("demo") === "1";
 let deviceMap = new Map();
@@ -31,6 +32,7 @@ const MAX_RECENT_UPLOADS = 10;
 const PAPERLESS_TERMINAL_STATUSES = new Set(["SUCCESS", "FAILURE"]);
 const recentPaperlessTasks = [];
 const paperlessPollTimers = new Map();
+const BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const timeoutState = {
   phase: "idle",
   countdownStartSeconds: 15,
@@ -53,6 +55,72 @@ function clearTimeoutCountdownState() {
   timeoutState.scan.startedAtMs = null;
   timeoutState.upload.timeoutSeconds = null;
   timeoutState.upload.startedAtMs = null;
+}
+
+function encodeBase62(value) {
+  if (!Number.isFinite(value) || value < 0) {
+    return "0";
+  }
+
+  let remainder = Math.floor(value);
+  if (remainder === 0) {
+    return "0";
+  }
+
+  let encoded = "";
+  const base = BASE62_ALPHABET.length;
+  while (remainder > 0) {
+    encoded = `${BASE62_ALPHABET[remainder % base]}${encoded}`;
+    remainder = Math.floor(remainder / base);
+  }
+
+  return encoded;
+}
+
+function generateDefaultFilenameBase() {
+  const timestampPart = encodeBase62(Date.now() * 1000);
+  const randomPartInt = Math.floor(Math.random() * BASE62_ALPHABET.length ** 2);
+  const randomPartBase62 = encodeBase62(randomPartInt).padStart(2, "0");
+  return `scan_${timestampPart}${randomPartBase62}`;
+}
+
+function setFilenameInputError(hasError) {
+  if (!filenameInput) {
+    return;
+  }
+
+  filenameInput.classList.toggle("input-error", hasError);
+}
+
+function setFilenameInputValue(filenameBase) {
+  if (!filenameInput) {
+    return;
+  }
+
+  const nextValue = typeof filenameBase === "string" && filenameBase.trim()
+    ? filenameBase.trim()
+    : generateDefaultFilenameBase();
+  filenameInput.value = nextValue;
+  setFilenameInputError(false);
+}
+
+function normalizeFilenameBaseInput(rawValue) {
+  if (typeof rawValue !== "string") {
+    return "";
+  }
+
+  const trimmed = rawValue.trim();
+  return trimmed.replace(/(?:\.pdf)+$/i, "");
+}
+
+function initializeFilenameInputInteractions() {
+  if (!filenameInput) {
+    return;
+  }
+
+  filenameInput.addEventListener("input", () => {
+    setFilenameInputError(false);
+  });
 }
 
 function setStatus(status, message, statsLines = []) {
@@ -404,10 +472,14 @@ function registerPaperlessTaskFromScanPayload(payload) {
   const payloadDeviceName = typeof payload?.device_name === "string"
     ? payload.device_name.trim()
     : "";
+  const payloadFilename = typeof payload?.filename === "string"
+    ? payload.filename.trim()
+    : "";
   const normalizedDeviceName = payloadDeviceName || activeScanDeviceName || selectedDeviceName || null;
   upsertRecentTaskEntry(normalizedTaskId, {
     submittedAt: Date.now(),
     deviceName: normalizedDeviceName,
+    fileName: payloadFilename || null,
     taskStatus: "STARTED",
     resultText: null,
     relatedDocumentId: null,
@@ -732,12 +804,14 @@ function applyDeviceConfigurations(payload) {
   if (!hasSelectedDevice) {
     selectedDeviceName = devices[0]?.device_name ?? null;
   }
+  setFilenameInputValue(payload?.default_filename_base);
   renderDeviceRadioGroups(devices, selectedDeviceName);
   renderDeviceDetails(deviceMap.get(selectedDeviceName) ?? null);
   updateScanButtonState();
 }
 
 function loadDemoData() {
+  setFilenameInputValue(generateDefaultFilenameBase());
   applyDeviceConfigurations({
     selected_device_name: "duplex_bw",
     paperless_base_url: "https://paperless.example.local",
@@ -927,11 +1001,20 @@ async function selectDeviceConfiguration(deviceName) {
 
 async function triggerScan() {
   if (!statusText || !scanButton) return;
+  const normalizedFilenameBase = normalizeFilenameBaseInput(filenameInput?.value ?? "");
+  if (normalizedFilenameBase === "") {
+    setFilenameInputError(true);
+    setStatus("error", "Filename cannot be empty");
+    return;
+  }
+  setFilenameInputError(false);
+
   if (isDemoMode) {
     completionFlashDeviceName = selectedDeviceName;
     localScanPhaseActive = true;
     selectedDeviceBusy = true;
     updateScanButtonState();
+    setFilenameInputValue(generateDefaultFilenameBase());
     setStatus("triggering", "triggering...");
     await new Promise((resolve) => {
       window.setTimeout(resolve, 450);
@@ -954,6 +1037,7 @@ async function triggerScan() {
   localScanPhaseActive = true;
   selectedDeviceBusy = true;
   updateScanButtonState();
+  setFilenameInputValue(generateDefaultFilenameBase());
   setStatus("triggering", "triggering...");
 
   try {
@@ -962,7 +1046,10 @@ async function triggerScan() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ device_name: selectedDeviceName }),
+      body: JSON.stringify({
+        device_name: selectedDeviceName,
+        filename_base: normalizedFilenameBase,
+      }),
     });
     if (!response.ok || !response.body) {
       let message = "invalid backend response";
@@ -976,6 +1063,9 @@ async function triggerScan() {
       }
 
       setStatus(response.status === 409 ? "busy" : "error", message);
+      if (typeof message === "string" && message.includes("Filename cannot be empty")) {
+        setFilenameInputError(true);
+      }
       if (response.status === 409) {
         completionFlashDeviceName = null;
       }
@@ -1045,6 +1135,8 @@ async function triggerScan() {
     await refreshScanStatus();
   }
 }
+
+initializeFilenameInputInteractions();
 
 if (scanButton) {
   scanButton.addEventListener("click", triggerScan);

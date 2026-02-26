@@ -428,6 +428,143 @@ class ApiPayloadTests(unittest.TestCase):
 
         self.assertEqual(result["paperless_task_id"], "cf13eea8-5c7a-40b8-aac8-bd8bdc315769")
 
+    @patch("app.random.randint", return_value=1714)
+    @patch("app.time.time", return_value=1730000000.0)
+    @patch("app.time.monotonic")
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_process_scan_generates_default_filename_when_filename_base_is_omitted(
+        self,
+        _mock_run_scan,
+        _mock_convert,
+        mock_upload,
+        mock_monotonic,
+        _mock_time,
+        _mock_randint,
+    ):
+        mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_filename_template.return_value = None
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            result = scan_app._process_scan()
+
+        self.assertRegex(result["filename_base"], r"^scan_[0-9A-Za-z]+$")
+        self.assertTrue(result["filename_base"].endswith("rE"))
+        self.assertEqual(result["filename"], f"{result['filename_base']}.pdf")
+        upload_pdf_path = mock_upload.call_args.args[0]
+        self.assertEqual(upload_pdf_path.name, result["filename"])
+
+    @patch("app.time.monotonic")
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_process_scan_normalizes_filename_base_and_deduplicates_pdf_extension(
+        self, _mock_run_scan, _mock_convert, mock_upload, mock_monotonic
+    ):
+        mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_filename_template.return_value = None
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            result = scan_app._process_scan(filename_base="  invoice_2026.pdf  ")
+
+        self.assertEqual(result["filename_base"], "invoice_2026")
+        self.assertEqual(result["filename"], "invoice_2026.pdf")
+        upload_pdf_path = mock_upload.call_args.args[0]
+        self.assertEqual(upload_pdf_path.name, "invoice_2026.pdf")
+
+    @patch("app.random.randint", return_value=2267)
+    @patch("app.time.time", return_value=1730000001.0)
+    @patch("app.time.monotonic")
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_process_scan_uses_configured_filename_template(
+        self,
+        _mock_run_scan,
+        _mock_convert,
+        _mock_upload,
+        mock_monotonic,
+        _mock_time,
+        _mock_randint,
+    ):
+        mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_filename_template.return_value = "inbox_{base62_id}"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            result = scan_app._process_scan()
+
+        self.assertRegex(result["filename_base"], r"^inbox_[0-9A-Za-z]+$")
+        self.assertTrue(result["filename_base"].endswith("Az"))
+
+    @patch("app.random.randint", return_value=2267)
+    @patch("app.time.time", return_value=1730000001.0)
+    @patch("app.time.monotonic")
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_process_scan_uses_configured_scan_uuid_template(
+        self,
+        _mock_run_scan,
+        _mock_convert,
+        _mock_upload,
+        mock_monotonic,
+        _mock_time,
+        _mock_randint,
+    ):
+        mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_filename_template.return_value = "inbox_{scan_uuid}"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            result = scan_app._process_scan()
+
+        self.assertRegex(result["filename_base"], r"^inbox_[0-9A-Za-z]+$")
+        self.assertTrue(result["filename_base"].endswith("Az"))
+
+    @patch("app.random.randint", return_value=1714)
+    @patch("app.time.time", return_value=1730000000.0)
+    @patch("app.time.monotonic")
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_process_scan_falls_back_to_default_template_when_configured_template_invalid(
+        self,
+        _mock_run_scan,
+        _mock_convert,
+        _mock_upload,
+        mock_monotonic,
+        _mock_time,
+        _mock_randint,
+    ):
+        mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_active_device_name.return_value = "brother-bw"
+        fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
+        fake_config_manager.get_filename_template.return_value = "inbox"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            result = scan_app._process_scan()
+
+        self.assertRegex(result["filename_base"], r"^scan_[0-9A-Za-z]+$")
+        self.assertTrue(result["filename_base"].endswith("rE"))
+
 
 class ApiPaperlessTaskTests(unittest.TestCase):
     def setUp(self):
@@ -558,6 +695,48 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["status"], "error")
         self.assertIn("not configured", payload["message"])
+
+    def test_post_scan_rejects_non_string_filename_base(self):
+        response = self.client.post("/api/scan", json={"filename_base": 123})
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["message"], "filename_base must be a string.")
+
+    def test_post_scan_rejects_empty_filename_base(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.post("/api/scan", json={"filename_base": "   "})
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["message"], "Filename cannot be empty")
+
+    @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
+    @patch("app._convert_tiffs_to_pdf", return_value=1)
+    @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
+    def test_post_scan_returns_filename_metadata(self, _mock_run_scan, _mock_convert, _mock_upload):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.list_user_devices.return_value = ["brother-bw"]
+        fake_config_manager.get_device_id.return_value = "scanner-bw"
+        fake_config_manager.get_filename_template.return_value = None
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.post(
+                "/api/scan",
+                json={"device_name": "brother-bw", "filename_base": "receipt_01"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["filename_base"], "receipt_01")
+        self.assertEqual(payload["filename"], "receipt_01.pdf")
 
 
 class ApiScanLockTests(unittest.TestCase):

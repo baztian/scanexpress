@@ -76,6 +76,37 @@ class ConfigManagerTests(unittest.TestCase):
 
         self.assertIn("No paperless API token configured", str(context.exception))
 
+    def test_get_filename_template_returns_configured_template(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+            filename_template = inbox_{base62_id}
+
+            [user:alice]
+            paperless_api_token = token-alice
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(manager.get_filename_template(), "inbox_{base62_id}")
+
+    def test_get_filename_template_returns_none_when_missing(self):
+        config_path = self._write_config(
+            """
+            [global]
+            current_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertIsNone(manager.get_filename_template())
+
     def test_list_user_devices_returns_only_matching_user_devices(self):
         config_path = self._write_config(
             """

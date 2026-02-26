@@ -57,10 +57,39 @@ test("loads page with idle state", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "ScanExpress" })).toBeVisible();
+  const filenameInput = page.getByLabel("Filename");
+  await expect(filenameInput).toBeVisible();
+  await expect(filenameInput).toHaveValue(/^scan_[0-9A-Za-z]+$/);
   await expect(page.getByText("Device configuration")).toBeVisible();
   await expect(page.locator('input[name="deviceConfig"]')).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Start Scan" })).toBeVisible();
   await expect(page.locator("#statusText")).toHaveText("Status: idle");
+});
+
+test("filename input click does not auto-select full content", async ({ page }) => {
+  await page.goto("/");
+
+  const filenameInput = page.getByLabel("Filename");
+  await filenameInput.click();
+
+  const selection = await filenameInput.evaluate((element) => ({
+    start: element.selectionStart,
+    end: element.selectionEnd,
+    length: element.value.length,
+  }));
+  expect(selection.start).toBe(selection.end);
+  expect(selection.end).toBeLessThanOrEqual(selection.length);
+});
+
+test("filename input shows error style when empty filename is submitted", async ({ page }) => {
+  await page.goto("/");
+
+  const filenameInput = page.getByLabel("Filename");
+  await filenameInput.fill("   ");
+  await page.getByRole("button", { name: "Start Scan" }).click();
+
+  await expect(filenameInput).toHaveClass(/input-error/);
+  await expect(page.locator("#statusText")).toHaveText("Status: error (Filename cannot be empty)");
 });
 
 test("scan controls appear above device selection", async ({ page }) => {
@@ -103,12 +132,17 @@ test("device configuration selector shows available devices and selected details
 
 test("clicking Start Scan runs backend with fake scanner and fake Paperless", async ({ page }) => {
   await page.goto("/");
+  const filenameInput = page.getByLabel("Filename");
+  const filenameBefore = await filenameInput.inputValue();
   await page.getByRole("button", { name: "Start Scan" }).click();
 
   await expect(page.locator("#statusText")).toHaveText(/^Status: ok \(.+\)$/);
   await expect(page.locator("#statusStats")).toHaveText(
     /^Total: \d+s\nScan: \d+s\nPaperless: \d+s\nScan\/page: \d+s\nPaperless\/page: \d+s$/
   );
+  const filenameAfter = await filenameInput.inputValue();
+  expect(filenameAfter).toMatch(/^scan_[0-9A-Za-z]+$/);
+  expect(filenameAfter).not.toBe(filenameBefore);
 });
 
 test("clicking Start Scan surfaces backend error when fake scanner fails", async ({ page }) => {

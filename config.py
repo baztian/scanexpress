@@ -292,6 +292,9 @@ class ConfigManager:
             raise RuntimeError("global.paperless_base_url is not configured.")
         return base_url
 
+    def get_filename_template(self) -> str | None:
+        return self.get_global("filename_template")
+
     def get_paperless_timeout_seconds(self) -> int | None:
         timeout_value = self.get_global("paperless_timeout_seconds")
         if timeout_value is None:

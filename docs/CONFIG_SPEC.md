@@ -26,6 +26,25 @@ ScanExpress uses Python's built-in `configparser` module to manage multi-user sc
 
 ## Configuration Structure
 
+### Global Configuration
+
+Global settings are defined in section `[global]`.
+
+Filename template setting:
+
+- `filename_template` (optional): Template used to generate the default filename basename shown in the UI.
+- Default fallback when unset: `scan_{scan_uuid}`.
+- Placeholder requirement: template should contain `{scan_uuid}` or `{base62_id}` to preserve uniqueness.
+- Canonical placeholder: `{scan_uuid}`.
+- Backward compatibility: `{base62_id}` is still supported.
+- If configured value is invalid (missing supported placeholders), runtime falls back to `scan_{scan_uuid}`.
+
+Examples:
+
+- `filename_template = scan_{scan_uuid}`
+- `filename_template = inbox_{scan_uuid}`
+- `filename_template = scan_{base62_id}`
+
 ### User Configuration
 
 Each user gets its own section: `[user:<username>]`
@@ -161,6 +180,7 @@ Fallback behavior:
     paperless_base_url = https://paperless.example.com
     scan_timeout_seconds = 30
     paperless_timeout_seconds = 5
+    filename_template = scan_{scan_uuid}
 
     [user:alice]
     paperless_api_token = token_alice_secret_123
@@ -303,7 +323,12 @@ On app startup:
     - `[user:<global.current_user>]` section must exist
    - User section must have `paperless_api_token` key
 
-3. On missing/invalid config, return clear error message
+    3. Validate optional filename template format when configured:
+
+        - If `[global] filename_template` is set, it should include `{scan_uuid}` or `{base62_id}`.
+        - If missing or invalid, app falls back safely to `scan_{scan_uuid}`.
+
+    4. On missing/invalid config, return clear error message
 
 Example error:
 
