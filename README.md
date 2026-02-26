@@ -59,6 +59,28 @@ Create config file from sample:
 
 Edit `/etc/scanexpress.conf` and set `global.default_user`, `global.paperless_base_url`, real user tokens, and scanner device templates.
 
+## Docker Image
+
+Versioned Docker images are published to Docker Hub from release tags (`vMAJOR.MINOR.PATCH`).
+The image includes `scanimage` (`sane-utils`) so scanner commands can run inside the container.
+
+Example:
+
+        docker pull baztian/scanexpress:latest
+        docker run --rm -p 8000:8000 \
+            -v /etc/scanexpress.conf:/etc/scanexpress.conf:ro \
+            baztian/scanexpress:latest
+
+### USB scanner permissions and mounts
+
+For local USB scanners, run with USB and udev mounts:
+
+    docker run --rm -p 8000:8000 \
+        --device /dev/bus/usb:/dev/bus/usb \
+        -v /run/udev:/run/udev:ro \
+        -v /etc/scanexpress.conf:/etc/scanexpress.conf:ro \
+        baztian/scanexpress:latest
+
 ## Authentication and Session Secret
 
 ScanExpress requires `global.default_user` to be set for normal UI operation.

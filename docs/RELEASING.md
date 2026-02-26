@@ -23,7 +23,22 @@ Tag meanings:
     git tag -a vX.Y.Z -m "Release vX.Y.Z"
 5. Push commit and tags:
     git push origin main --follow-tags
-6. Create a GitHub Release from tag `vX.Y.Z` with focused notes for that version only.
+6. Verify Docker Hub publish workflow succeeds for tag `vX.Y.Z` (workflow: `Docker Release`).
+7. Create a GitHub Release from tag `vX.Y.Z` with focused notes for that version only.
+
+## Docker Hub Release Setup
+
+Create these GitHub repository settings once:
+
+- Secret `DOCKERHUB_USERNAME`: Docker Hub account name.
+- Secret `DOCKERHUB_TOKEN`: Docker Hub access token with push permissions.
+- Variable `DOCKERHUB_REPOSITORY`: full Docker Hub image path, for example `baztian/scanexpress`.
+
+Release behavior:
+
+- Pushing a tag in format `vMAJOR.MINOR.PATCH` publishes Docker image tags:
+- Pushing a tag in format `vMAJOR.MINOR.PATCH` publishes Docker image tags `MAJOR.MINOR.PATCH`, `MAJOR.MINOR`, `MAJOR`, and `latest`.
+- Workflow file: `.github/workflows/docker-release.yml`
 
 ## Hotfix
 
