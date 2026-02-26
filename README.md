@@ -61,7 +61,8 @@ Edit `/etc/scanexpress.conf` and set `global.default_user`, `global.paperless_ba
 
 ## Docker Image
 
-Versioned Docker images are published to Docker Hub from release tags (`vMAJOR.MINOR.PATCH`).
+[Versioned Docker images](https://hub.docker.com/r/baztian/scanexpress) are published to Docker Hub from release tags (`vMAJOR.MINOR.PATCH`).
+
 The image includes `scanimage` (`sane-utils`) so scanner commands can run inside the container.
 
 Example:

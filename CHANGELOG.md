@@ -8,8 +8,18 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- No changes yet.
+
+## [0.0.2] - 2026-02-27
+
+### Added
+
 - Docker support for running ScanExpress in containerized environments.
 - Initial work to publish ScanExpress images to Docker Hub.
+
+### Documentation
+
+- README now mentions Docker image availability on Docker Hub.
 
 ## [0.0.1] - 2026-02-26
 
@@ -29,5 +39,5 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Service unit template and sample configuration for server installs.
 
 [0.0.1]: https://github.com/baztian/scanexpress/releases/tag/v0.0.1
-[0.0.2]: https://github.com/baztian/scanexpress/releases/tag/v0.0.2
+[0.0.2]: https://github.com/baztian/scanexpress/compare/v0.0.1...v0.0.2
 [Unreleased]: https://github.com/baztian/scanexpress/compare/v0.0.2...HEAD
