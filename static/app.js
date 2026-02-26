@@ -10,6 +10,8 @@ const deviceDetails = document.getElementById("deviceDetails");
 const recentUploadsBody = document.getElementById("recentUploadsBody");
 const filenameInput = document.getElementById("filenameInput");
 const headerUsername = document.getElementById("headerUsername");
+const accountMenuButton = document.getElementById("accountMenuButton");
+const accountMenuList = document.getElementById("accountMenuList");
 const logoutButton = document.getElementById("logoutButton");
 const queryParams = new URLSearchParams(window.location.search);
 const isDemoMode = queryParams.get("demo") === "1";
@@ -117,7 +119,29 @@ function renderHeaderAccount(username) {
   headerUsername.textContent = normalizedUsername;
 }
 
+function setAccountMenuOpen(isOpen) {
+  if (!accountMenuButton || !accountMenuList) {
+    return;
+  }
+
+  accountMenuButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  accountMenuList.hidden = !isOpen;
+}
+
+function isAccountMenuOpen() {
+  if (!accountMenuButton || !accountMenuList) {
+    return false;
+  }
+
+  return accountMenuButton.getAttribute("aria-expanded") === "true";
+}
+
+function closeAccountMenu() {
+  setAccountMenuOpen(false);
+}
+
 function clearUiForLoggedOutState() {
+  closeAccountMenu();
   renderHeaderAccount("Unknown user");
   selectedDeviceName = null;
   selectedDeviceBusy = false;
@@ -938,6 +962,10 @@ async function triggerLogout() {
     return;
   }
 
+  closeAccountMenu();
+  if (accountMenuButton) {
+    accountMenuButton.disabled = true;
+  }
   logoutButton.disabled = true;
   try {
     const response = await fetch("/auth/logout", { method: "POST" });
@@ -954,6 +982,9 @@ async function triggerLogout() {
     setStatus("error", "error contacting backend");
   } finally {
     logoutButton.disabled = false;
+    if (accountMenuButton) {
+      accountMenuButton.disabled = false;
+    }
   }
 }
 
@@ -1293,6 +1324,36 @@ if (scanButton) {
 if (logoutButton) {
   logoutButton.addEventListener("click", () => {
     void triggerLogout();
+  });
+}
+
+if (accountMenuButton && accountMenuList) {
+  accountMenuButton.addEventListener("click", () => {
+    setAccountMenuOpen(!isAccountMenuOpen());
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!isAccountMenuOpen()) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Node)) {
+      closeAccountMenu();
+      return;
+    }
+
+    if (accountMenuButton.contains(target) || accountMenuList.contains(target)) {
+      return;
+    }
+
+    closeAccountMenu();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeAccountMenu();
+    }
   });
 }
 

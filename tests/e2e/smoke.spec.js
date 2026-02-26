@@ -81,9 +81,15 @@ test("shows username in header and exposes logout action", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.locator("#headerUsername")).toHaveText("e2e");
-  const logoutButton = page.getByRole("button", { name: "Log out" });
-  await expect(logoutButton).toBeVisible();
-  await logoutButton.click();
+  const accountMenuButton = page.locator("#accountMenuButton");
+  await expect(accountMenuButton).toBeVisible();
+  await expect(page.locator("#accountMenuList")).toBeHidden();
+
+  await accountMenuButton.click();
+
+  const logoutMenuItem = page.getByRole("menuitem", { name: "Log out" });
+  await expect(logoutMenuItem).toBeVisible();
+  await logoutMenuItem.click();
 
   await expect.poll(() => logoutCalled).toBeTruthy();
 });

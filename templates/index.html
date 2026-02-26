@@ -14,8 +14,22 @@
           <p class="subtitle">Scan locally and send documents to Paperless-ngx.</p>
         </div>
         <div class="app-header-account" aria-label="User account">
-          <span id="headerUsername" class="header-username">{{ resolved_username or 'Unknown user' }}</span>
-          <button id="logoutButton" type="button" class="logout-button">Log out</button>
+          <div class="account-menu">
+            <button
+              id="accountMenuButton"
+              type="button"
+              class="account-menu-button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="accountMenuList"
+            >
+              <span id="headerUsername" class="header-username">{{ resolved_username or 'Unknown user' }}</span>
+              <span class="account-menu-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div id="accountMenuList" class="account-menu-list" role="menu" hidden>
+              <button id="logoutButton" type="button" class="account-menu-item" role="menuitem">Log out</button>
+            </div>
+          </div>
         </div>
       </header>
 

@@ -78,7 +78,6 @@ body.scan-complete-flash-reduced {
 .app-header-account {
   display: flex;
   align-items: center;
-  gap: 10px;
   margin-left: auto;
 }
 
@@ -88,7 +87,11 @@ body.scan-complete-flash-reduced {
   overflow-wrap: anywhere;
 }
 
-.logout-button {
+.account-menu {
+  position: relative;
+}
+
+.account-menu-button {
   border: 1px solid #d8e2da;
   background: #ffffff;
   color: var(--paperless-green);
@@ -96,13 +99,58 @@ body.scan-complete-flash-reduced {
   padding: 6px 10px;
   font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(320px, 70vw);
 }
 
-.logout-button:hover:enabled {
+.account-menu-button .header-username {
+  color: inherit;
+}
+
+.account-menu-button:hover:enabled {
   background: #f4f8f4;
 }
 
-.logout-button:disabled {
+.account-menu-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.account-menu-chevron {
+  flex: 0 0 auto;
+}
+
+.account-menu-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 150px;
+  border: 1px solid #d8e2da;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 6px;
+  z-index: 20;
+}
+
+.account-menu-item {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--paperless-green);
+  padding: 8px 10px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.account-menu-item:hover:enabled {
+  background: #f4f8f4;
+}
+
+.account-menu-item:disabled {
   opacity: 0.65;
   cursor: not-allowed;
 }
