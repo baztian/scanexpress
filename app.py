@@ -30,10 +30,134 @@ _PAPERLESS_UPLOAD_RETRY_BASE_DELAY_SECONDS = 0.5
 _PAPERLESS_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 _BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _DEFAULT_FILENAME_TEMPLATE = "scan_{scan_uuid}"
+_MAX_RECENT_UPLOADS = 10
+_RECENT_UPLOADS_LOCK = threading.Lock()
+_RECENT_UPLOADS_BY_USER: dict[str, list[dict[str, object | None]]] = {}
 
 
 class ScanInProgressError(RuntimeError):
     pass
+
+
+def _current_time_millis() -> int:
+    return int(time.time() * 1000)
+
+
+def _build_recent_upload_defaults(task_id: str) -> dict[str, object | None]:
+    now_millis = _current_time_millis()
+    return {
+        "task_id": task_id,
+        "submitted_at": now_millis,
+        "device_name": None,
+        "file_name": None,
+        "task_status": "STARTED",
+        "result_text": None,
+        "related_document": None,
+        "is_polling": True,
+        "last_error": None,
+        "last_updated_at": now_millis,
+        "poll_failure_count": 0,
+    }
+
+
+def _upsert_recent_upload_for_user(
+    username: str,
+    task_id: str,
+    updates: dict[str, object | None] | None = None,
+) -> dict[str, object | None]:
+    normalized_task_id = task_id.strip()
+    if normalized_task_id == "":
+        raise RuntimeError("task_id is required for recent upload history.")
+
+    next_updates = dict(updates or {})
+    next_updates["task_id"] = normalized_task_id
+    if "last_updated_at" not in next_updates:
+        next_updates["last_updated_at"] = _current_time_millis()
+
+    with _RECENT_UPLOADS_LOCK:
+        user_history = _RECENT_UPLOADS_BY_USER.setdefault(username, [])
+        for existing_index, existing_entry in enumerate(user_history):
+            if existing_entry.get("task_id") != normalized_task_id:
+                continue
+
+            merged_entry = {**existing_entry, **next_updates}
+            user_history[existing_index] = merged_entry
+            return dict(merged_entry)
+
+        new_entry = {**_build_recent_upload_defaults(normalized_task_id), **next_updates}
+        user_history.insert(0, new_entry)
+        del user_history[_MAX_RECENT_UPLOADS:]
+        return dict(new_entry)
+
+
+def _list_recent_uploads_for_user(username: str) -> list[dict[str, object | None]]:
+    with _RECENT_UPLOADS_LOCK:
+        user_history = _RECENT_UPLOADS_BY_USER.get(username, [])
+        return [dict(entry) for entry in user_history]
+
+
+def _is_paperless_upload_failure_message(message: str) -> bool:
+    return "Paperless upload request failed" in message or "Paperless upload failed (" in message
+
+
+def _register_recent_upload_from_scan_payload(scan_payload: dict) -> None:
+    if scan_payload.get("status") != "ok":
+        return
+
+    username = scan_payload.get("username")
+    task_id = scan_payload.get("paperless_task_id")
+    if not isinstance(username, str) or username.strip() == "":
+        return
+    if not isinstance(task_id, str) or task_id.strip() == "":
+        return
+
+    filename = scan_payload.get("filename")
+    file_name = str(filename).strip() if filename is not None else None
+    if file_name == "":
+        file_name = None
+
+    _upsert_recent_upload_for_user(
+        username,
+        task_id,
+        {
+            "submitted_at": _current_time_millis(),
+            "device_name": scan_payload.get("device_name"),
+            "file_name": file_name,
+            "task_status": "STARTED",
+            "result_text": None,
+            "related_document": None,
+            "is_polling": True,
+            "last_error": None,
+            "poll_failure_count": 0,
+        },
+    )
+
+
+def _register_recent_upload_failure(
+    username: str,
+    message: str,
+    device_name: str | None = None,
+    file_name: str | None = None,
+) -> None:
+    if not _is_paperless_upload_failure_message(message):
+        return
+
+    failure_task_id = f"upload-failure-{_current_time_millis()}-{random.randint(0, 9999)}"
+    _upsert_recent_upload_for_user(
+        username,
+        failure_task_id,
+        {
+            "submitted_at": _current_time_millis(),
+            "device_name": device_name,
+            "file_name": file_name,
+            "task_status": "FAILURE",
+            "result_text": message,
+            "related_document": None,
+            "is_polling": False,
+            "last_error": None,
+            "poll_failure_count": 0,
+        },
+    )
 
 
 def get_config_manager() -> ConfigManager:
@@ -917,18 +1041,33 @@ def trigger_scan():
         return jsonify({"status": "error", "message": "Filename cannot be empty"}), 400
 
     try:
+        scan_payload = _process_scan_with_device_lock(
+            requested_device_name=requested_device_name,
+            filename_base=filename_base,
+        )
+        _register_recent_upload_from_scan_payload(scan_payload)
         return (
-            jsonify(
-                _process_scan_with_device_lock(
-                    requested_device_name=requested_device_name,
-                    filename_base=filename_base,
-                )
-            ),
+            jsonify(scan_payload),
             200,
         )
     except ScanInProgressError as exc:
         return jsonify({"status": "busy", "message": str(exc)}), 409
     except RuntimeError as exc:
+        if _is_paperless_upload_failure_message(str(exc)):
+            config_manager = get_config_manager()
+            username = config_manager.get_current_user()
+            normalized_filename_base = None
+            if isinstance(filename_base, str) and filename_base.strip() != "":
+                normalized_filename_base = _normalize_filename_base(filename_base, config_manager)
+            output_file_name = (
+                f"{normalized_filename_base}.pdf" if normalized_filename_base is not None else None
+            )
+            _register_recent_upload_failure(
+                username,
+                str(exc),
+                requested_device_name,
+                output_file_name,
+            )
         if "not configured for user" in str(exc) or str(exc) == "Filename cannot be empty":
             return jsonify({"status": "error", "message": str(exc)}), 400
         return jsonify({"status": "error", "message": str(exc)}), 500
@@ -1011,6 +1150,7 @@ def trigger_scan_stream():
                     requested_device_name=device_name,
                     filename_base=filename_base,
                 )
+                _register_recent_upload_from_scan_payload(result)
                 updates_queue.put({**result, "complete": True})
             except ScanInProgressError as exc:
                 updates_queue.put(
@@ -1021,6 +1161,15 @@ def trigger_scan_stream():
                     }
                 )
             except RuntimeError as exc:
+                output_file_name = None
+                if isinstance(filename_base, str) and filename_base.strip() != "":
+                    output_file_name = f"{_normalize_filename_base(filename_base, config_manager)}.pdf"
+                _register_recent_upload_failure(
+                    username,
+                    str(exc),
+                    device_name,
+                    output_file_name,
+                )
                 updates_queue.put(
                     {
                         "status": "error",
@@ -1099,6 +1248,36 @@ def get_scan_status():
         )
 
 
+@app.get("/api/recent-uploads")
+def get_recent_uploads():
+    try:
+        config_manager = get_config_manager()
+        username = config_manager.get_current_user()
+        return (
+            jsonify(
+                {
+                    "status": "ok",
+                    "username": username,
+                    "recent_uploads": _list_recent_uploads_for_user(username),
+                }
+            ),
+            200,
+        )
+    except RuntimeError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 500
+    except Exception:
+        app.logger.exception("Unexpected error while processing /api/recent-uploads")
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Unexpected backend error while loading recent uploads.",
+                }
+            ),
+            500,
+        )
+
+
 @app.get("/api/paperless/tasks/<task_id>")
 def get_paperless_task_status(task_id: str):
     if task_id.strip() == "":
@@ -1108,6 +1287,21 @@ def get_paperless_task_status(task_id: str):
         config_manager = get_config_manager()
         username = config_manager.get_current_user()
         payload = _fetch_paperless_task_status(task_id, username)
+        task_status = payload.get("task_status")
+        is_terminal = task_status in {"SUCCESS", "FAILURE"}
+        _upsert_recent_upload_for_user(
+            username,
+            task_id,
+            {
+                "task_status": task_status,
+                "result_text": payload.get("result"),
+                "related_document": payload.get("related_document"),
+                "file_name": payload.get("task_file_name"),
+                "is_polling": not is_terminal,
+                "last_error": None,
+                "poll_failure_count": 0,
+            },
+        )
         return jsonify(payload), 200
     except LookupError:
         return jsonify({"status": "error", "message": "Task not found"}), 404

@@ -435,3 +435,45 @@ test("recent uploads keeps max 10 entries in newest-first order", async ({ page 
   await expect(entries.first()).toContainText("task-11");
   await expect(entries.last()).toContainText("task-2");
 });
+
+test("recent uploads is restored from backend after page reload", async ({ page }) => {
+  let recentUploadsCalls = 0;
+
+  await page.route("**/api/recent-uploads", async (route) => {
+    recentUploadsCalls += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "ok",
+        username: "test",
+        recent_uploads: [
+          {
+            task_id: "task-server-1",
+            submitted_at: Date.now() - 5000,
+            device_name: "flatbed",
+            file_name: "server-side.pdf",
+            task_status: "SUCCESS",
+            result_text: "Success. New document id 44 created",
+            related_document: "44",
+            is_polling: false,
+            last_error: null,
+            last_updated_at: Date.now() - 3000,
+            poll_failure_count: 0,
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto("/");
+
+  const firstRow = page.locator("#recentUploadsBody tr").first();
+  await expect(firstRow).toContainText("task-server-1");
+  await expect(firstRow).toContainText("server-side.pdf");
+
+  await page.reload();
+  await expect(firstRow).toContainText("task-server-1");
+  await expect(firstRow).toContainText("server-side.pdf");
+  expect(recentUploadsCalls).toBeGreaterThanOrEqual(2);
+});

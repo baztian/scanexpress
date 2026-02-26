@@ -571,6 +571,10 @@ class ApiPaperlessTaskTests(unittest.TestCase):
         scan_app.app.config["TESTING"] = True
         self.client = scan_app.app.test_client()
 
+    def tearDown(self):
+        with scan_app._RECENT_UPLOADS_LOCK:
+            scan_app._RECENT_UPLOADS_BY_USER.clear()
+
     @patch("app.requests.get")
     def test_get_paperless_task_status_returns_normalized_started_payload(self, mock_requests_get):
         fake_config_manager = Mock()
@@ -624,6 +628,121 @@ class ApiPaperlessTaskTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["message"], "Task not found")
+
+    @patch("app.requests.get")
+    def test_get_paperless_task_status_updates_recent_upload_entry(self, mock_requests_get):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
+        fake_config_manager.get_user_token.return_value = "secret-token"
+
+        task_id = "task-123"
+        scan_app._upsert_recent_upload_for_user(
+            "alice",
+            task_id,
+            {
+                "submitted_at": 1700000000000,
+                "device_name": "flatbed",
+                "file_name": "Offer.pdf",
+                "task_status": "STARTED",
+                "result_text": None,
+                "related_document": None,
+                "last_error": None,
+            },
+        )
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [
+            {
+                "task_id": task_id,
+                "status": "SUCCESS",
+                "related_document": 21,
+                "result": "Success. New document id 21 created",
+                "date_done": "2026-02-24T14:33:09.254628+01:00",
+                "task_file_name": "Offer.pdf",
+            }
+        ]
+        mock_requests_get.return_value = mock_response
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get(f"/api/paperless/tasks/{task_id}")
+
+        self.assertEqual(response.status_code, 200)
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            history_response = self.client.get("/api/recent-uploads")
+
+        self.assertEqual(history_response.status_code, 200)
+        history_payload = history_response.get_json()
+        self.assertEqual(history_payload["status"], "ok")
+        self.assertEqual(len(history_payload["recent_uploads"]), 1)
+        history_entry = history_payload["recent_uploads"][0]
+        self.assertEqual(history_entry["task_id"], task_id)
+        self.assertEqual(history_entry["task_status"], "SUCCESS")
+        self.assertEqual(history_entry["related_document"], "21")
+
+
+class ApiRecentUploadsTests(unittest.TestCase):
+    def setUp(self):
+        scan_app.app.config["TESTING"] = True
+        self.client = scan_app.app.test_client()
+
+    def tearDown(self):
+        with scan_app._RECENT_UPLOADS_LOCK:
+            scan_app._RECENT_UPLOADS_BY_USER.clear()
+
+    def test_get_recent_uploads_returns_empty_list_by_default(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get("/api/recent-uploads")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["username"], "alice")
+        self.assertEqual(payload["recent_uploads"], [])
+
+    def test_get_recent_uploads_returns_entries_for_current_user_only(self):
+        scan_app._upsert_recent_upload_for_user(
+            "alice",
+            "task-alice",
+            {
+                "submitted_at": 1700000000000,
+                "device_name": "flatbed",
+                "file_name": "alice.pdf",
+                "task_status": "STARTED",
+                "result_text": None,
+                "related_document": None,
+                "last_error": None,
+            },
+        )
+        scan_app._upsert_recent_upload_for_user(
+            "bob",
+            "task-bob",
+            {
+                "submitted_at": 1700000001000,
+                "device_name": "adf",
+                "file_name": "bob.pdf",
+                "task_status": "STARTED",
+                "result_text": None,
+                "related_document": None,
+                "last_error": None,
+            },
+        )
+
+        fake_config_manager = Mock()
+        fake_config_manager.get_current_user.return_value = "alice"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get("/api/recent-uploads")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(len(payload["recent_uploads"]), 1)
+        self.assertEqual(payload["recent_uploads"][0]["task_id"], "task-alice")
 
 
 class ApiDeviceConfigurationTests(unittest.TestCase):

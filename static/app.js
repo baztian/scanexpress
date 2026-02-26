@@ -295,6 +295,85 @@ function upsertRecentTaskEntry(taskId, updates = {}) {
   return entry;
 }
 
+function normalizeRecentUploadEntryFromServer(rawEntry) {
+  const taskId = typeof rawEntry?.task_id === "string" ? rawEntry.task_id.trim() : "";
+  if (!taskId) {
+    return null;
+  }
+
+  const taskStatus = typeof rawEntry?.task_status === "string"
+    ? rawEntry.task_status
+    : "STARTED";
+  const relatedDocumentId = rawEntry?.related_document
+    ? String(rawEntry.related_document)
+    : null;
+
+  return {
+    taskId,
+    submittedAt: Number.isFinite(Number(rawEntry?.submitted_at))
+      ? Number(rawEntry.submitted_at)
+      : Date.now(),
+    deviceName: typeof rawEntry?.device_name === "string" && rawEntry.device_name.trim()
+      ? rawEntry.device_name.trim()
+      : null,
+    fileName: typeof rawEntry?.file_name === "string" && rawEntry.file_name.trim()
+      ? rawEntry.file_name.trim()
+      : null,
+    taskStatus,
+    resultText: typeof rawEntry?.result_text === "string" ? rawEntry.result_text : null,
+    relatedDocumentId,
+    documentUrl: buildDocumentUrl(relatedDocumentId),
+    isPolling: rawEntry?.is_polling === true || !PAPERLESS_TERMINAL_STATUSES.has(taskStatus),
+    lastError: typeof rawEntry?.last_error === "string" ? rawEntry.last_error : null,
+    lastUpdatedAt: Number.isFinite(Number(rawEntry?.last_updated_at))
+      ? Number(rawEntry.last_updated_at)
+      : Date.now(),
+    pollFailureCount: Number.isFinite(Number(rawEntry?.poll_failure_count))
+      ? Number(rawEntry.poll_failure_count)
+      : 0,
+  };
+}
+
+async function loadRecentUploadsFromServer() {
+  try {
+    const response = await fetch("/api/recent-uploads", { method: "GET" });
+    if (!response.ok) {
+      renderRecentUploads();
+      return;
+    }
+
+    const payload = await response.json();
+    const serverEntries = Array.isArray(payload?.recent_uploads)
+      ? payload.recent_uploads
+      : [];
+
+    recentPaperlessTasks.splice(0, recentPaperlessTasks.length);
+    for (const rawEntry of serverEntries) {
+      const normalizedEntry = normalizeRecentUploadEntryFromServer(rawEntry);
+      if (!normalizedEntry) {
+        continue;
+      }
+
+      recentPaperlessTasks.push(normalizedEntry);
+    }
+
+    for (const [taskId] of paperlessPollTimers.entries()) {
+      stopTaskPolling(taskId);
+    }
+
+    for (const entry of recentPaperlessTasks) {
+      if (!entry?.taskId || !entry.isPolling) {
+        continue;
+      }
+      scheduleTaskPolling(entry.taskId, 0);
+    }
+
+    renderRecentUploads();
+  } catch (_error) {
+    renderRecentUploads();
+  }
+}
+
 function renderRecentUploads() {
   if (!recentUploadsBody) {
     return;
@@ -984,6 +1063,7 @@ async function loadDeviceConfigurations() {
 
     const payload = await response.json();
     applyDeviceConfigurations(payload);
+    await loadRecentUploadsFromServer();
     await refreshScanStatus();
   } catch (_error) {
     statusText.textContent = "Status: error loading device configuration";

@@ -23,7 +23,6 @@ In scope:
 
 Out of scope:
 
-- Persisting task history across page reloads.
 - Multi-user realtime synchronization across browser sessions.
 - Replacing existing scan/stream progress UX.
 
@@ -84,6 +83,11 @@ If Paperless returns no matching task array item, backend returns:
 
 Add a task status section at the bottom of `templates/index.html`.
 
+Recent upload history source of truth:
+
+- Backend in-memory history, segmented per current user.
+- Frontend loads history from `GET /api/recent-uploads` on page load.
+
 Required presentation:
 
 - Title: `Recent uploads`.
@@ -111,6 +115,7 @@ For each scan result that includes `paperless_task_id`:
 - Poll interval: 2 seconds (configurable constant in `static/app.js`).
 - Continue polling while `task_status === "STARTED"`.
 - Stop polling when status is not `STARTED`.
+- Backend updates server-side recent-upload entries as task poll responses are normalized.
 
 Terminal states:
 
@@ -161,6 +166,7 @@ Frontend:
 New endpoint:
 
 - `GET /api/paperless/tasks/<task_id>`
+- `GET /api/recent-uploads`
 
 Example normalized success body:
 
