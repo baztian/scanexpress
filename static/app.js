@@ -189,6 +189,34 @@ function initializeFilenameInputInteractions() {
   });
 }
 
+function getDeepLinkedDeviceName() {
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const deepLinkedValue = hashParams.get("device");
+  if (typeof deepLinkedValue !== "string") {
+    return null;
+  }
+
+  const normalizedValue = deepLinkedValue.trim();
+  return normalizedValue ? normalizedValue : null;
+}
+
+function updateConfigurationDeepLink(deviceName) {
+  if (!window.history || typeof window.history.replaceState !== "function") {
+    return;
+  }
+
+  const nextParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  if (typeof deviceName === "string" && deviceName.trim()) {
+    nextParams.set("device", deviceName);
+  } else {
+    nextParams.delete("device");
+  }
+
+  const nextHash = nextParams.toString();
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ""}`;
+  window.history.replaceState(null, "", nextUrl);
+}
+
 function setStatus(status, message, statsLines = []) {
   currentStatus = status;
   currentMessage = message;
@@ -941,6 +969,12 @@ function applyDeviceConfigurations(payload) {
   const devices = payload?.devices ?? [];
   deviceMap = new Map(devices.map((device) => [device.device_name, device]));
   selectedDeviceName = payload?.selected_device_name ?? null;
+
+  const deepLinkedDeviceName = getDeepLinkedDeviceName();
+  if (deepLinkedDeviceName && deviceMap.has(deepLinkedDeviceName)) {
+    selectedDeviceName = deepLinkedDeviceName;
+  }
+
   paperlessBaseUrl = typeof payload?.paperless_base_url === "string"
     ? payload.paperless_base_url.replace(/\/$/, "")
     : "";
@@ -954,6 +988,7 @@ function applyDeviceConfigurations(payload) {
   setFilenameInputValue(payload?.default_filename_base);
   renderDeviceRadioGroups(devices, selectedDeviceName);
   renderDeviceDetails(deviceMap.get(selectedDeviceName) ?? null);
+  updateConfigurationDeepLink(selectedDeviceName);
   updateScanButtonState();
 }
 
@@ -1173,6 +1208,7 @@ async function selectDeviceConfiguration(deviceName) {
   selectedDeviceName = deviceName;
   selectedDeviceBusy = activeScanDeviceName !== null && selectedDeviceName === activeScanDeviceName;
   renderDeviceDetails(deviceMap.get(selectedDeviceName) ?? null);
+  updateConfigurationDeepLink(selectedDeviceName);
   updateScanButtonState();
   setStatus("selected", selectedDeviceName);
   await refreshScanStatus();

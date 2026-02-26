@@ -158,6 +158,15 @@ test("device configuration selector shows available devices and selected details
   await expect(page.locator("#statusText")).toHaveText("Status: selected (flatbed)");
 });
 
+test("hash device deep link preselects configuration", async ({ page }) => {
+  await page.goto("/#device=flatbed");
+
+  const fakeRadio = page.locator('input[name="deviceConfig"][value="fake"]');
+  const flatbedRadio = page.locator('input[name="deviceConfig"][value="flatbed"]');
+  await expect(fakeRadio).not.toBeChecked();
+  await expect(flatbedRadio).toBeChecked();
+});
+
 test("clicking Start Scan runs backend with fake scanner and fake Paperless", async ({ page }) => {
   await page.goto("/");
   const filenameInput = page.getByLabel("Filename");

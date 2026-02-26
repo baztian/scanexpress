@@ -107,6 +107,7 @@ Alternative without `openssl`:
 - Open the ScanExpress UI in browser.
 - Your username appears in the top-right header.
 - Use `Log out` in the top-right header to end your session.
+- For a frontend-only walkthrough, open the UI with `?demo=1` (for example `/\?demo=1`) to load sample devices and recent uploads without running a real scan.
 
 Optional: if your config file is stored at a non-default path, set `SCANEXPRESS_CONFIG_FILE` in your service unit environment.
 
