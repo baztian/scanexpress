@@ -68,7 +68,14 @@ Each user gets its own section: `[user:<username>]`
 
 ## Device Templates
 
-Users can define device presets under: `[user:<username>:device:<device_name>]`
+Device presets can be defined as:
+
+- User-specific templates: `[user:<username>:device:<device_name>]`
+- Shared default templates for all users: `[device:<device_name>]`
+
+When both a user-specific and shared default template exist with the same `<device_name>`, the user-specific template is used.
+
+Example:
 
     [user:alice:device:brother-color]
     device_id = BrotherADS2200:libusb:001:002
@@ -90,13 +97,23 @@ Users can define device presets under: `[user:<username>:device:<device_name>]`
     resolution = 200
     mode = Gray
 
-    [userbrother-:bob:device:canon-default]
+    [device:shared-flatbed]
+    device_id = Canon:usb:123:456
+    scan_command = /usr/bin/scanimage
+    scan_output_mode = single_file
+    scan_timeout_seconds = 40
+
+    [device:shared-flatbed:scanimage-params]
+    resolution = 150
+    mode = 24 bit Color
+
+    [user:bob:device:canon-default]
     device_id = Canon:usb:123:brother --456
     scan_command = /usr/bin/scanimage
     scan_output_mode = single_file
     scan_timeout_seconds = 40
 
-    [user:bob:device:canon-default:scbrother-animage-params]
+    [user:bob:device:canon-default:scanimage-params]
     resolution = 150
     mode = 24 bit Color
 
@@ -164,7 +181,8 @@ Now your device reference is stable across unplug/replug cycles.
 
 Preferred location for scanner CLI options:
 
-`[user:<username>:device:<device_name>:scanimage-params]`
+- `[user:<username>:device:<device_name>:scanimage-params]`
+- `[device:<device_name>:scanimage-params]`
 
 All keys in this section are passed through dynamically as scan command args:
 
@@ -175,7 +193,7 @@ All keys in this section are passed through dynamically as scan command args:
 
 Fallback behavior:
 
-- If `:scanimage-params` section is missing, additional non-reserved keys from `[user:<username>:device:<device_name>]` are treated as scan command args.
+- If `:scanimage-params` section is missing, additional non-reserved keys from the selected device section are treated as scan command args.
 - Reserved keys in device section are not passed through as scanimage args: `device_id`, `scan_command`, `scan_output_mode`, `scan_timeout_seconds`.
 
 ---

@@ -156,6 +156,148 @@ class ConfigManagerTests(unittest.TestCase):
 
         self.assertEqual(manager.list_user_devices("alice"), ["brother-color"])
 
+    def test_list_user_devices_includes_global_devices(self):
+        config_path = self._write_config(
+            """
+            [global]
+            default_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+
+            [user:alice:device:brother-bw]
+            device_id = scanner-1
+
+            [device:shared-flatbed]
+            device_id = scanner-2
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(
+            manager.list_user_devices("alice"),
+            ["brother-bw", "shared-flatbed"],
+        )
+
+    def test_get_user_device_falls_back_to_global_device(self):
+        config_path = self._write_config(
+            """
+            [global]
+            default_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+
+            [device:shared-flatbed]
+            device_id = scanner-2
+            scan_output_mode = single_file
+            """
+        )
+
+        manager = ConfigManager(config_path)
+        device = manager.get_user_device("alice", "shared-flatbed")
+
+        self.assertEqual(device["device_id"], "scanner-2")
+        self.assertEqual(device["scan_output_mode"], "single_file")
+
+    def test_get_user_device_prefers_user_specific_device_over_global(self):
+        config_path = self._write_config(
+            """
+            [global]
+            default_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+
+            [device:shared-flatbed]
+            device_id = global-scanner
+            scan_output_mode = single_file
+
+            [user:alice:device:shared-flatbed]
+            device_id = alice-scanner
+            scan_output_mode = batch
+            """
+        )
+
+        manager = ConfigManager(config_path)
+        device = manager.get_user_device("alice", "shared-flatbed")
+
+        self.assertEqual(device["device_id"], "alice-scanner")
+        self.assertEqual(device["scan_output_mode"], "batch")
+
+    def test_get_active_device_accepts_global_default_device(self):
+        config_path = self._write_config(
+            """
+            [global]
+            default_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = shared-flatbed
+
+            [device:shared-flatbed]
+            device_id = scanner-2
+            scan_output_mode = single_file
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(manager.get_active_device_name("alice"), "shared-flatbed")
+
+    def test_get_device_scanimage_params_falls_back_to_global_device_section(self):
+        config_path = self._write_config(
+            """
+            [global]
+            default_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = shared-flatbed
+
+            [device:shared-flatbed]
+            device_id = scanner-2
+            scan_output_mode = single_file
+            resolution = 300
+            mode = Gray
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(
+            manager.get_device_scanimage_params("alice"),
+            {
+                "resolution": "300",
+                "mode": "Gray",
+            },
+        )
+
+    def test_get_device_id_prefers_user_specific_device_over_global(self):
+        config_path = self._write_config(
+            """
+            [global]
+            default_user = alice
+
+            [user:alice]
+            paperless_api_token = token-alice
+            default_device = shared-flatbed
+
+            [device:shared-flatbed]
+            device_id = global-scanner
+            scan_output_mode = single_file
+
+            [user:alice:device:shared-flatbed]
+            device_id = alice-scanner
+            scan_output_mode = batch
+            """
+        )
+
+        manager = ConfigManager(config_path)
+
+        self.assertEqual(manager.get_device_id("alice", "shared-flatbed"), "alice-scanner")
+
     def test_get_user_device_returns_settings_dict(self):
         config_path = self._write_config(
             """

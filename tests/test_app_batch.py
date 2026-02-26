@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app as scan_app
+from config import ConfigManager
 
 
 class BatchScanCommandTests(unittest.TestCase):
@@ -785,6 +786,58 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
         self.assertEqual(payload["devices"][0]["device_name"], "brother-bw")
         self.assertEqual(payload["devices"][0]["device_id"], "scanner-bw")
         self.assertEqual(payload["devices"][0]["scanimage_params"]["mode"], "Gray")
+
+    def test_get_device_configurations_includes_shared_device_and_prefers_user_override(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.ini"
+            config_path.write_text(
+                "[global]\n"
+                "default_user = alice\n"
+                "paperless_base_url = https://paperless.example.com\n"
+                "\n"
+                "[user:alice]\n"
+                "paperless_api_token = token-alice\n"
+                "default_device = shared-flatbed\n"
+                "\n"
+                "[device:shared-flatbed]\n"
+                "device_id = global-scanner\n"
+                "scan_output_mode = single_file\n"
+                "scan_timeout_seconds = 40\n"
+                "\n"
+                "[device:shared-flatbed:scanimage-params]\n"
+                "mode = Gray\n"
+                "resolution = 150\n"
+                "\n"
+                "[user:alice:device:shared-flatbed]\n"
+                "device_id = alice-scanner\n"
+                "scan_output_mode = batch\n"
+                "scan_timeout_seconds = 25\n"
+                "\n"
+                "[user:alice:device:shared-flatbed:scanimage-params]\n"
+                "mode = Color\n"
+                "resolution = 300\n",
+                encoding="utf-8",
+            )
+            manager = ConfigManager(config_path)
+
+            with patch("app.get_config_manager", return_value=manager), patch(
+                "app._resolve_libusb_device_id", side_effect=lambda value: value
+            ):
+                response = self.client.get("/api/device-configurations")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["username"], "alice")
+        self.assertEqual(payload["selected_device_name"], "shared-flatbed")
+        self.assertEqual(len(payload["devices"]), 1)
+        self.assertEqual(payload["devices"][0]["device_name"], "shared-flatbed")
+        self.assertEqual(payload["devices"][0]["device_id"], "alice-scanner")
+        self.assertEqual(payload["devices"][0]["scan_output_mode"], "batch")
+        self.assertEqual(
+            payload["devices"][0]["scanimage_params"],
+            {"mode": "Color", "resolution": "300"},
+        )
 
     @patch("app._upload_pdf_to_paperless", return_value={"id": 4242})
     @patch("app._convert_tiffs_to_pdf", return_value=1)

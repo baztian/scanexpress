@@ -45,8 +45,49 @@ class ConfigManager:
     def _section_name_device(self, username: str, device_name: str) -> str:
         return f"user:{username}:device:{device_name}"
 
+    def _section_name_global_device(self, device_name: str) -> str:
+        return f"device:{device_name}"
+
     def _section_name_device_scanimage_params(self, username: str, device_name: str) -> str:
         return f"{self._section_name_device(username, device_name)}:scanimage-params"
+
+    def _section_name_global_device_scanimage_params(self, device_name: str) -> str:
+        return f"{self._section_name_global_device(device_name)}:scanimage-params"
+
+    def _resolve_device_section_name(self, username: str, device_name: str) -> str | None:
+        user_device_section_name = self._section_name_device(username, device_name)
+        if self._parser.has_section(user_device_section_name):
+            return user_device_section_name
+
+        global_device_section_name = self._section_name_global_device(device_name)
+        if self._parser.has_section(global_device_section_name):
+            return global_device_section_name
+
+        return None
+
+    def _resolve_device_scanimage_params_section_name(
+        self, username: str, device_name: str
+    ) -> str | None:
+        user_params_section_name = self._section_name_device_scanimage_params(
+            username, device_name
+        )
+        if self._parser.has_section(user_params_section_name):
+            return user_params_section_name
+
+        global_params_section_name = self._section_name_global_device_scanimage_params(
+            device_name
+        )
+        if self._parser.has_section(global_params_section_name):
+            return global_params_section_name
+
+        return None
+
+    def _read_device_key(self, username: str, device_name: str, key: str) -> str | None:
+        device_section_name = self._resolve_device_section_name(username, device_name)
+        if device_section_name is None:
+            return None
+
+        return self._read_section_key(device_section_name, key)
 
     def _strip_value(self, value: str | None) -> str | None:
         if value is None:
@@ -156,9 +197,7 @@ class ConfigManager:
     def get_user_scan_command(self, username: str, device_name: str | None = None) -> str | None:
         selected_device_name = device_name or self.get_active_device_name(username)
         if selected_device_name is not None:
-            command = self._read_section_key(
-                self._section_name_device(username, selected_device_name), "scan_command"
-            )
+            command = self._read_device_key(username, selected_device_name, "scan_command")
             if command is not None:
                 return command
 
@@ -169,14 +208,21 @@ class ConfigManager:
         return None
 
     def list_user_devices(self, username: str) -> list[str]:
-        prefix = f"{self._section_name_user(username)}:device:"
-        devices = []
+        user_prefix = f"{self._section_name_user(username)}:device:"
+        global_prefix = "device:"
+        devices = set()
         for section_name in self._parser.sections():
-            if section_name.startswith(prefix):
-                device_name = section_name[len(prefix) :]
+            device_name = None
+            if section_name.startswith(user_prefix):
+                device_name = section_name[len(user_prefix) :]
+            elif section_name.startswith(global_prefix):
+                device_name = section_name[len(global_prefix) :]
+
+            if device_name is not None:
                 if ":" in device_name:
                     continue
-                devices.append(device_name)
+                devices.add(device_name)
+
         return sorted(devices)
 
     def get_active_device_name(self, username: str) -> str | None:
@@ -232,8 +278,8 @@ class ConfigManager:
         return self.get_active_device_name(username)
 
     def get_user_device(self, username: str, device_name: str) -> dict:
-        section_name = self._section_name_device(username, device_name)
-        if not self._parser.has_section(section_name):
+        section_name = self._resolve_device_section_name(username, device_name)
+        if section_name is None:
             raise RuntimeError(
                 f"Device '{device_name}' is not configured for user '{username}'."
             )
@@ -247,20 +293,25 @@ class ConfigManager:
         if selected_device_name is None:
             return {}
 
-        dedicated_section_name = self._section_name_device_scanimage_params(
+        dedicated_section_name = self._resolve_device_scanimage_params_section_name(
             username, selected_device_name
         )
-        if self._parser.has_section(dedicated_section_name):
+        if dedicated_section_name is not None:
             params = {}
             for key, value in self._parser.items(dedicated_section_name):
                 params[key] = value.strip()
             return params
 
-        device_section_name = self._section_name_device(username, selected_device_name)
-        if not self._parser.has_section(device_section_name):
+        device_section_name = self._resolve_device_section_name(username, selected_device_name)
+        if device_section_name is None:
             return {}
 
-        reserved_device_keys = {"device_id", "scan_command", "scan_timeout_seconds"}
+        reserved_device_keys = {
+            "device_id",
+            "scan_command",
+            "scan_output_mode",
+            "scan_timeout_seconds",
+        }
         params = {}
         for key, value in self._parser.items(device_section_name):
             if key in reserved_device_keys:
@@ -272,9 +323,7 @@ class ConfigManager:
     def get_device_id(self, username: str, device_name: str | None = None) -> str | None:
         selected_device_name = device_name or self.get_active_device_name(username)
         if selected_device_name is not None:
-            device_id = self._read_section_key(
-                self._section_name_device(username, selected_device_name), "device_id"
-            )
+            device_id = self._read_device_key(username, selected_device_name, "device_id")
             if device_id is not None:
                 return device_id
 
@@ -289,7 +338,12 @@ class ConfigManager:
                 f"No device configured for user '{username}', cannot resolve scan_output_mode."
             )
 
-        section_name = self._section_name_device(username, selected_device_name)
+        section_name = self._resolve_device_section_name(username, selected_device_name)
+        if section_name is None:
+            raise RuntimeError(
+                f"Device '{selected_device_name}' is not configured for user '{username}'."
+            )
+
         configured_mode = self._read_section_key(section_name, "scan_output_mode")
         if configured_mode is None:
             raise RuntimeError(
@@ -311,14 +365,17 @@ class ConfigManager:
     ) -> int | None:
         selected_device_name = device_name or self.get_active_device_name(username)
         if selected_device_name is not None:
-            device_timeout = self._read_section_key(
-                self._section_name_device(username, selected_device_name),
-                "scan_timeout_seconds",
-            )
+            section_name = self._resolve_device_section_name(username, selected_device_name)
+            device_timeout = None
+            if section_name is not None:
+                device_timeout = self._read_section_key(
+                    section_name,
+                    "scan_timeout_seconds",
+                )
             if device_timeout is not None:
                 return self._parse_positive_int(
                     device_timeout,
-                    f"{self._section_name_device(username, selected_device_name)}.scan_timeout_seconds",
+                    f"{section_name}.scan_timeout_seconds",
                 )
 
         global_timeout = self.get_global("scan_timeout_seconds")

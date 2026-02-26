@@ -70,16 +70,16 @@ ScanExpress requires `global.default_user` to be set for normal UI operation.
 
 1. Configure users in `/etc/scanexpress.conf`:
 
-    [global]
-    # Set to a long random value before deployment.
-    # secret_key = replace-with-long-random-secret
-    default_user = alice
-    paperless_base_url = https://paperless.example.com
+       [global]
+       # Set to a long random value before deployment.
+       # secret_key = replace-with-long-random-secret
+       default_user = alice
+       paperless_base_url = https://paperless.example.com
 
-    [user:alice]
-    password_hash = scrypt:32768:8:1$...$...
-    paperless_api_token = replace-with-alice-token
-    default_device = brother-color
+       [user:alice]
+       password_hash = scrypt:32768:8:1$...$...
+       paperless_api_token = replace-with-alice-token
+       default_device = brother-color
 
 2. Generate password hashes (run on a trusted host):
 
@@ -157,8 +157,12 @@ Configuration resolution is **config-first with env fallback**:
 - `config.ini` `[global]` is primary source for `paperless_base_url`, `scan_timeout_seconds`, and `paperless_timeout_seconds`.
 - `config.ini` `[global]` also defines `default_user` (required active UI user).
 - `config.ini` `[user:<username>]` supports:
-  - `default_device` (required when user has one or more `[user:<username>:device:*]` templates) to choose the default scanner template deterministically.
+  - `default_device` (required when one or more device templates are available to that user) to choose the default scanner template deterministically.
   - `default_scanimage_params_device` (optional) to choose which device template supplies default `scanimage` parameters.
+- Device templates can be defined either per user or globally:
+  - user-specific: `[user:<username>:device:<device_name>]`
+  - shared defaults for all users: `[device:<device_name>]`
+  - if both exist with the same `<device_name>`, the user-specific section takes precedence.
 
 See full schema and examples in [docs/CONFIG_SPEC.md](docs/CONFIG_SPEC.md).
 
@@ -174,14 +178,14 @@ Default config lookup order when `SCANEXPRESS_CONFIG_FILE` is not set:
 
 Dynamic scanner args from config:
 
-- Preferred: define arbitrary scanner options in `[user:<username>:device:<device_name>:scanimage-params]`.
+- Preferred: define arbitrary scanner options in `[user:<username>:device:<device_name>:scanimage-params]` or `[device:<device_name>:scanimage-params]`.
 - Each key/value is passed to scanner as `--<key> <value>` (underscores become dashes).
-- Compatibility fallback: when `:scanimage-params` is absent, extra non-reserved keys in `[user:<username>:device:<device_name>]` are also passed as scanner args.
+- Compatibility fallback: when `:scanimage-params` is absent, extra non-reserved keys in the selected device section are also passed as scanner args.
 - If no `device_id` is configured for the selected/default template, ScanExpress runs the scan command without the `-d` argument.
 
 Required scan output mode per device:
 
-- Each `[user:<username>:device:<device_name>]` section must define `scan_output_mode` as either `batch` or `single_file`.
+- Each device section (`[user:<username>:device:<device_name>]` or `[device:<device_name>]`) must define `scan_output_mode` as either `batch` or `single_file`.
 - `batch` and `single_file` map to mutually exclusive scanner flags (`--batch` vs `--output-file`).
 
 ## License

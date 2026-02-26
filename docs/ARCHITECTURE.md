@@ -4,7 +4,7 @@
 
 1. User opens the Flask-served web page and clicks the scan button.
 2. Frontend JavaScript sends a request to the Flask progress-stream endpoint.
-3. Flask backend resolves current user and active device via `ConfigManager` (`config.ini` first, env fallback).
+3. Flask backend resolves current user and active device via `ConfigManager` (`config.ini` first, env fallback), supporting both user-specific device templates and shared global templates.
 4. Flask backend executes configured scanner command/wrapper (`scanimage` compatible) with batch output (`--batch=.../scan_output%d.tiff`).
 5. Backend converts all generated TIFF output files/pages to a PDF.
 6. Backend uploads PDF to Paperless-ngx (`/api/documents/post_document/`).
