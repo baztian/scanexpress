@@ -9,8 +9,14 @@
   <body>
     <main id="appShell" class="app-shell">
       <header class="app-header">
-        <h1>ScanExpress</h1>
-        <p class="subtitle">Scan locally and send documents to Paperless-ngx.</p>
+        <div class="app-header-main">
+          <h1>ScanExpress</h1>
+          <p class="subtitle">Scan locally and send documents to Paperless-ngx.</p>
+        </div>
+        <div class="app-header-account" aria-label="User account">
+          <span id="headerUsername" class="header-username">{{ resolved_username or 'Unknown user' }}</span>
+          <button id="logoutButton" type="button" class="logout-button">Log out</button>
+        </div>
       </header>
 
       <section class="panel action-panel">

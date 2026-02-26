@@ -39,6 +39,12 @@ Filename template setting:
 - Backward compatibility: `{base62_id}` is still supported.
 - If configured value is invalid (missing supported placeholders), runtime falls back to `scan_{scan_uuid}`.
 
+Session secret setting:
+
+- `secret_key` (recommended): Flask session signing secret.
+- Resolution precedence: `SCANEXPRESS_SECRET_KEY` environment variable first, then `[global].secret_key`.
+- If neither is set, runtime falls back to a development default secret.
+
 Examples:
 
 - `filename_template = scan_{scan_uuid}`
@@ -177,6 +183,7 @@ Fallback behavior:
 ## Complete Example Config
 
     [global]
+    secret_key = replace-with-long-random-secret
     paperless_base_url = https://paperless.example.com
     scan_timeout_seconds = 30
     paperless_timeout_seconds = 5
@@ -232,6 +239,7 @@ Runtime settings are config-only.
 Only optional environment variable:
 
 - `SCANEXPRESS_CONFIG_FILE`: path override for `config.ini`.
+- `SCANEXPRESS_SECRET_KEY`: overrides `[global].secret_key` for Flask session signing.
 
 ---
 
@@ -301,9 +309,10 @@ Setup steps:
 1. Copy `scanexpress.sample.conf` to `/etc/scanexpress.conf`
 2. Edit `/etc/scanexpress.conf`:
 
-    - Set `[global] current_user`
+    - Set `[global] default_user` (or leave empty to require login)
     - Set `[global] paperless_base_url`
    - Update user sections with actual Paperless API tokens
+   - Set per-user `password_hash` values when login-required mode is used
    - Add/modify device templates with your scanner settings
    - Set device_id values specific to your hardware
    - Adjust scan_timeout_seconds for each device if needed
@@ -319,8 +328,9 @@ On app startup:
 1. Load config file from configured location (default lookup order: `~/.config/scanexpress/scanexpress.conf`, then `/etc/scanexpress.conf`)
 2. Validate required keys exist:
 
-    - `[global]` section must contain `current_user`
-    - `[user:<global.current_user>]` section must exist
+    - `[global] default_user` is optional (auto-login mode)
+    - If `[global] default_user` is set, `[user:<global.default_user>]` section must exist
+    - If `[global] default_user` is empty, each login-enabled `[user:<username>]` should contain `password_hash`
    - User section must have `paperless_api_token` key
 
     3. Validate optional filename template format when configured:
@@ -332,7 +342,7 @@ On app startup:
 
 Example error:
 
-    ERROR: global.current_user=alice but user 'alice' not found in scanexpress.conf.
+    ERROR: global.default_user=alice but user 'alice' not found in scanexpress.conf.
     Available users: bob, charlie
 
 ---
@@ -399,7 +409,7 @@ This design is extensible to a database backend:
 3. Add admin UI to edit config (writes to DB, not INI)
 4. DB can be seeded from INI on first run
 
-**No breaking changes:** config.ini remains valid, used for deployment / initial values.
+**Authentication migration note:** this is a breaking change for auth keys; the old global active-user key has been replaced by `global.default_user`.
 
 ---
 
@@ -416,7 +426,7 @@ This design is extensible to a database backend:
 
 **Phase 1 (current):**
 
-- Single configured user via `[global] current_user`.
+- Optional auto-login via `[global] default_user`; otherwise authenticated session user.
 
 **Phase 2 (future):**
 
@@ -429,7 +439,7 @@ This design is extensible to a database backend:
 
 Currently, the frontend calls `POST /api/scan` or `POST /api/scan/stream` without any user context.
 
-- Scan endpoint uses configured `[global] current_user`
+- Scan endpoint uses resolved authenticated user or `[global] default_user`
 - Response includes `username` field (for logging/debugging)
 
 ## Documentation Updates

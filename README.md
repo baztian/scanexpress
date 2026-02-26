@@ -57,7 +57,56 @@ Create config file from sample:
     sudo chown root:scanexpress /etc/scanexpress.conf
     sudo chmod 640 /etc/scanexpress.conf
 
-Edit `/etc/scanexpress.conf` and set `global.current_user`, `global.paperless_base_url`, real user tokens, and scanner device templates.
+Edit `/etc/scanexpress.conf` and set `global.default_user`, `global.paperless_base_url`, real user tokens, and scanner device templates.
+
+## Authentication and Session Secret
+
+ScanExpress requires `global.default_user` to be set for normal UI operation.
+
+- Set `global.default_user = <username>` to choose the active UI user.
+- If `global.default_user` is empty or missing, the UI renders a configuration error page.
+
+### Admin instructions
+
+1. Configure users in `/etc/scanexpress.conf`:
+
+    [global]
+    # Set to a long random value before deployment.
+    # secret_key = replace-with-long-random-secret
+    default_user = alice
+    paperless_base_url = https://paperless.example.com
+
+    [user:alice]
+    password_hash = scrypt:32768:8:1$...$...
+    paperless_api_token = replace-with-alice-token
+    default_device = brother-color
+
+2. Generate password hashes (run on a trusted host):
+
+    python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('change-me'))"
+
+3. Configure Flask session signing secret in `/etc/scanexpress.conf` (`[global].secret_key`).
+
+    Optional override: set `SCANEXPRESS_SECRET_KEY` in your service environment; this takes precedence over config.
+
+4. Reload/restart service:
+
+    sudo systemctl daemon-reload
+    sudo systemctl restart scanexpress
+
+Practical Unix shell example to generate a strong random secret:
+
+    openssl rand -base64 48 | tr -d '\n'
+
+Alternative without `openssl`:
+
+    python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+
+### User instructions
+
+- Open the ScanExpress UI in browser.
+- Your username appears in the top-right header.
+- Use `Log out` in the top-right header to end your session.
 
 Optional: if your config file is stored at a non-default path, set `SCANEXPRESS_CONFIG_FILE` in your service unit environment.
 
@@ -105,7 +154,7 @@ Configuration resolution is **config-first with env fallback**:
 - `config.ini` user + device sections are primary source for token, scan command, device id, per-device scan timeout, and scan output mode.
 - `config.ini` `:scanimage-params` subsection is the preferred source for scanner command options; keys are passed through dynamically as CLI args.
 - `config.ini` `[global]` is primary source for `paperless_base_url`, `scan_timeout_seconds`, and `paperless_timeout_seconds`.
-- `config.ini` `[global]` also defines `current_user`.
+- `config.ini` `[global]` also defines `default_user` (required active UI user).
 - `config.ini` `[user:<username>]` supports:
   - `default_device` (required when user has one or more `[user:<username>:device:*]` templates) to choose the default scanner template deterministically.
   - `default_scanimage_params_device` (optional) to choose which device template supplies default `scanimage` parameters.
@@ -115,6 +164,7 @@ See full schema and examples in [docs/CONFIG_SPEC.md](docs/CONFIG_SPEC.md).
 Environment variables:
 
 - `SCANEXPRESS_CONFIG_FILE` (optional): path to config file.
+- `SCANEXPRESS_SECRET_KEY` (optional): overrides `[global].secret_key` when set.
 
 Default config lookup order when `SCANEXPRESS_CONFIG_FILE` is not set:
 

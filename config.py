@@ -2,6 +2,8 @@ import os
 from configparser import ConfigParser
 from pathlib import Path
 
+from werkzeug.security import check_password_hash
+
 
 class ConfigManager:
     """Manages reading and accessing ScanExpress configuration."""
@@ -86,9 +88,9 @@ class ConfigManager:
         return self._parser.has_section(self._section_name_user(username))
 
     def get_current_user(self) -> str:
-        configured_user = self._read_section_key("global", "current_user")
+        configured_user = self._read_section_key("global", "default_user")
         if configured_user is None:
-            raise RuntimeError("global.current_user is not configured.")
+            raise RuntimeError("global.default_user is not configured.")
 
         if self.user_exists(configured_user):
             return configured_user
@@ -96,7 +98,22 @@ class ConfigManager:
         configured_users = self.list_users()
         available_users = ", ".join(configured_users) if configured_users else "none"
         raise RuntimeError(
-            f"global.current_user={configured_user} but user '{configured_user}' "
+            f"global.default_user={configured_user} but user '{configured_user}' "
+            f"not found in {self._config_file.name}. Available users: {available_users}"
+        )
+
+    def get_default_user(self) -> str | None:
+        configured_user = self._read_section_key("global", "default_user")
+        if configured_user is None:
+            return None
+
+        if self.user_exists(configured_user):
+            return configured_user
+
+        configured_users = self.list_users()
+        available_users = ", ".join(configured_users) if configured_users else "none"
+        raise RuntimeError(
+            f"global.default_user={configured_user} but user '{configured_user}' "
             f"not found in {self._config_file.name}. Available users: {available_users}"
         )
 
@@ -111,6 +128,30 @@ class ConfigManager:
         raise RuntimeError(
             f"No paperless API token configured for user '{username}' in config.ini."
         )
+
+    def get_user_password_hash(self, username: str) -> str:
+        password_hash = self._read_section_key(self._section_name_user(username), "password_hash")
+        if password_hash is not None:
+            return password_hash
+
+        raise RuntimeError(
+            f"No password_hash configured for user '{username}' in config.ini."
+        )
+
+    def verify_user_password(self, username: str, plain_password: str) -> bool:
+        if not isinstance(username, str) or username.strip() == "":
+            return False
+        if not isinstance(plain_password, str) or plain_password == "":
+            return False
+        if not self.user_exists(username):
+            return False
+
+        try:
+            password_hash = self.get_user_password_hash(username)
+        except RuntimeError:
+            return False
+
+        return check_password_hash(password_hash, plain_password)
 
     def get_user_scan_command(self, username: str, device_name: str | None = None) -> str | None:
         selected_device_name = device_name or self.get_active_device_name(username)

@@ -14,6 +14,7 @@ In scope:
 - Group configurations under each device ID while preserving single selection.
 - Replace the current raw recent upload list with a structured, readable recent scans list/table.
 - Add a background flash effect when a scan completes and the scan button becomes available again.
+- Show the authenticated username in the top-right header area with a logout action.
 
 Out of scope:
 
@@ -52,6 +53,12 @@ Single-page structure remains:
 3. Selected configuration details.
 4. Primary scan action + status.
 5. Recent scans history.
+
+Header requirement:
+
+- Header includes an account area aligned to the top-right.
+- Account area shows current username.
+- Account area includes a logout control that invokes the logout flow defined in `docs/USER_LOGIN_SPEC.md`.
 
 ## Device and Configuration Selection
 
@@ -179,6 +186,12 @@ Implementation note:
 - Background flash occurs once each time scan cycle completes and button re-enables.
 - Works for both success and failure terminal outcomes.
 - Reduced-motion preference is respected.
+
+1. Header account UX:
+
+- Logged-in username is visible at top-right.
+- Logout action is visible and keyboard accessible.
+- Activating logout triggers the backend logout API and returns the UI to unauthenticated state when login is required.
 
 1. Regression safety:
 

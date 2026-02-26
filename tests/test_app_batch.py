@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from base64 import b64encode
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -362,7 +363,7 @@ class ApiPayloadTests(unittest.TestCase):
     ):
         mock_monotonic.side_effect = [10.0, 11.0, 14.0, 20.0, 22.5, 23.0]
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
 
@@ -398,7 +399,7 @@ class ApiPayloadTests(unittest.TestCase):
     ):
         mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
 
@@ -419,7 +420,7 @@ class ApiPayloadTests(unittest.TestCase):
     ):
         mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
 
@@ -445,7 +446,7 @@ class ApiPayloadTests(unittest.TestCase):
     ):
         mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
         fake_config_manager.get_filename_template.return_value = None
@@ -468,7 +469,7 @@ class ApiPayloadTests(unittest.TestCase):
     ):
         mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
         fake_config_manager.get_filename_template.return_value = None
@@ -498,7 +499,7 @@ class ApiPayloadTests(unittest.TestCase):
     ):
         mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
         fake_config_manager.get_filename_template.return_value = "inbox_{base62_id}"
@@ -526,7 +527,7 @@ class ApiPayloadTests(unittest.TestCase):
     ):
         mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
         fake_config_manager.get_filename_template.return_value = "inbox_{scan_uuid}"
@@ -554,7 +555,7 @@ class ApiPayloadTests(unittest.TestCase):
     ):
         mock_monotonic.side_effect = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_device_id.return_value = "BrotherADS2200:libusb:001:002"
         fake_config_manager.get_filename_template.return_value = "inbox"
@@ -578,7 +579,7 @@ class ApiPaperlessTaskTests(unittest.TestCase):
     @patch("app.requests.get")
     def test_get_paperless_task_status_returns_normalized_started_payload(self, mock_requests_get):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
         fake_config_manager.get_user_token.return_value = "secret-token"
 
@@ -611,7 +612,7 @@ class ApiPaperlessTaskTests(unittest.TestCase):
     @patch("app.requests.get")
     def test_get_paperless_task_status_returns_not_found_when_task_list_empty(self, mock_requests_get):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
         fake_config_manager.get_user_token.return_value = "secret-token"
 
@@ -632,7 +633,7 @@ class ApiPaperlessTaskTests(unittest.TestCase):
     @patch("app.requests.get")
     def test_get_paperless_task_status_updates_recent_upload_entry(self, mock_requests_get):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
         fake_config_manager.get_user_token.return_value = "secret-token"
 
@@ -694,7 +695,7 @@ class ApiRecentUploadsTests(unittest.TestCase):
 
     def test_get_recent_uploads_returns_empty_list_by_default(self):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
 
         with patch("app.get_config_manager", return_value=fake_config_manager):
             response = self.client.get("/api/recent-uploads")
@@ -734,7 +735,7 @@ class ApiRecentUploadsTests(unittest.TestCase):
         )
 
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
 
         with patch("app.get_config_manager", return_value=fake_config_manager):
             response = self.client.get("/api/recent-uploads")
@@ -752,7 +753,7 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
 
     def test_get_device_configurations_returns_available_and_selected_device_details(self):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.list_user_devices.return_value = ["brother-bw", "brother-color"]
         fake_config_manager.get_active_device_name.return_value = "brother-bw"
         fake_config_manager.get_user_device.side_effect = [
@@ -790,7 +791,7 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
     @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
     def test_post_scan_uses_requested_device_name(self, _mock_run_scan, _mock_convert, _mock_upload):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.list_user_devices.return_value = ["brother-bw", "brother-color"]
         fake_config_manager.get_device_id.return_value = "scanner-color"
 
@@ -804,7 +805,7 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
 
     def test_post_scan_rejects_unknown_requested_device_name(self):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.list_user_devices.return_value = ["brother-bw"]
 
         with patch("app.get_config_manager", return_value=fake_config_manager):
@@ -825,7 +826,7 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
 
     def test_post_scan_rejects_empty_filename_base(self):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
 
         with patch("app.get_config_manager", return_value=fake_config_manager):
             response = self.client.post("/api/scan", json={"filename_base": "   "})
@@ -840,7 +841,7 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
     @patch("app._run_scan_command", return_value=[Path("/tmp/scan_output1.tiff")])
     def test_post_scan_returns_filename_metadata(self, _mock_run_scan, _mock_convert, _mock_upload):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.list_user_devices.return_value = ["brother-bw"]
         fake_config_manager.get_device_id.return_value = "scanner-bw"
         fake_config_manager.get_filename_template.return_value = None
@@ -858,6 +859,287 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
         self.assertEqual(payload["filename"], "receipt_01.pdf")
 
 
+class ApiAuthTests(unittest.TestCase):
+    def setUp(self):
+        scan_app.app.config["TESTING"] = True
+        self.client = scan_app.app.test_client()
+
+    def _basic_auth_header(self, username: str, password: str) -> dict[str, str]:
+        encoded = b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        return {"Authorization": f"Basic {encoded}"}
+
+    def test_protected_api_requires_login_when_default_user_not_configured(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get("/api/device-configurations")
+
+        self.assertEqual(response.status_code, 401)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("authentication", payload["message"].lower())
+
+    def test_protected_api_accepts_basic_auth_and_sets_session(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.verify_user_password.return_value = True
+        fake_config_manager.user_exists.return_value = True
+        fake_config_manager.list_user_devices.return_value = []
+        fake_config_manager.get_active_device_name.return_value = None
+        fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
+        fake_config_manager.get_filename_template.return_value = None
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            first_response = self.client.get(
+                "/api/device-configurations",
+                headers=self._basic_auth_header("alice", "secret"),
+            )
+            second_response = self.client.get("/api/device-configurations")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        payload = second_response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["username"], "alice")
+        fake_config_manager.verify_user_password.assert_called_once_with("alice", "secret")
+
+    def test_index_shows_configuration_error_when_default_user_and_secret_missing(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = None
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn("WWW-Authenticate", response.headers)
+        body = response.get_data(as_text=True).lower()
+        self.assertIn("not configured properly", body)
+        self.assertIn("secret_key", body)
+
+    def test_index_requires_browser_auth_when_default_user_missing_but_secret_configured(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("WWW-Authenticate", response.headers)
+
+    def test_index_accepts_basic_auth_and_sets_session(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+        fake_config_manager.verify_user_password.return_value = True
+        fake_config_manager.user_exists.return_value = True
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            first_response = self.client.get(
+                "/",
+                headers=self._basic_auth_header("alice", "secret"),
+            )
+            second_response = self.client.get("/")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        first_body = first_response.get_data(as_text=True)
+        second_body = second_response.get_data(as_text=True)
+        self.assertIn("ScanExpress", first_body)
+        self.assertIn("ScanExpress", second_body)
+        fake_config_manager.verify_user_password.assert_called_once_with("alice", "secret")
+
+    def test_logout_rotates_auth_realm_in_login_mode(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+        fake_config_manager.verify_user_password.return_value = True
+        fake_config_manager.user_exists.return_value = True
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            self.client.post("/auth/login", headers=self._basic_auth_header("alice", "secret"))
+            logout_response = self.client.post("/auth/logout")
+            index_response = self.client.get("/")
+
+        self.assertEqual(logout_response.status_code, 200)
+        self.assertEqual(index_response.status_code, 401)
+        self.assertIn("WWW-Authenticate", index_response.headers)
+        self.assertNotEqual(
+            index_response.headers.get("WWW-Authenticate"),
+            'Basic realm="ScanExpress"',
+        )
+
+    def test_logout_blocks_basic_auto_relogin_on_index(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+        fake_config_manager.verify_user_password.return_value = True
+        fake_config_manager.user_exists.return_value = True
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            self.client.get("/", headers=self._basic_auth_header("alice", "secret"))
+            self.client.post("/auth/logout")
+            response = self.client.get("/", headers=self._basic_auth_header("alice", "secret"))
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_logout_allows_login_again_via_index_basic_auth(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+        fake_config_manager.verify_user_password.return_value = True
+        fake_config_manager.user_exists.return_value = True
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            self.client.get("/", headers=self._basic_auth_header("alice", "secret"))
+            self.client.post("/auth/logout")
+            first_retry = self.client.get("/", headers=self._basic_auth_header("alice", "secret"))
+            second_retry = self.client.get("/", headers=self._basic_auth_header("alice", "secret"))
+
+        self.assertEqual(first_retry.status_code, 401)
+        self.assertEqual(second_retry.status_code, 200)
+        body = second_retry.get_data(as_text=True)
+        self.assertIn("ScanExpress", body)
+
+    def test_auth_login_endpoint_clears_logout_suppression(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+        fake_config_manager.verify_user_password.return_value = True
+        fake_config_manager.user_exists.return_value = True
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            self.client.get("/", headers=self._basic_auth_header("alice", "secret"))
+            self.client.post("/auth/logout")
+            login_response = self.client.post(
+                "/auth/login", headers=self._basic_auth_header("alice", "secret")
+            )
+            index_response = self.client.get("/")
+
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(index_response.status_code, 200)
+
+    def test_login_with_basic_auth_sets_session_for_protected_api(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+        fake_config_manager.verify_user_password.return_value = True
+        fake_config_manager.list_user_devices.return_value = []
+        fake_config_manager.get_active_device_name.return_value = None
+        fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
+        fake_config_manager.get_filename_template.return_value = None
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            login_response = self.client.post(
+                "/auth/login", headers=self._basic_auth_header("alice", "secret")
+            )
+            device_response = self.client.get("/api/device-configurations")
+
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(device_response.status_code, 200)
+        payload = device_response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["username"], "alice")
+        fake_config_manager.verify_user_password.assert_called_once_with("alice", "secret")
+
+    def test_logout_clears_session_for_protected_api(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+        fake_config_manager.verify_user_password.return_value = True
+        fake_config_manager.list_user_devices.return_value = []
+        fake_config_manager.get_active_device_name.return_value = None
+        fake_config_manager.get_paperless_base_url.return_value = "http://paperless"
+        fake_config_manager.get_filename_template.return_value = None
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            self.client.post("/auth/login", headers=self._basic_auth_header("alice", "secret"))
+            logout_response = self.client.post("/auth/logout")
+            device_response = self.client.get("/api/device-configurations")
+
+        self.assertEqual(logout_response.status_code, 200)
+        self.assertEqual(device_response.status_code, 401)
+
+    def test_login_returns_error_when_secret_key_missing_in_login_mode(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = None
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "app.get_config_manager", return_value=fake_config_manager
+        ):
+            response = self.client.post(
+                "/auth/login", headers=self._basic_auth_header("alice", "secret")
+            )
+
+        self.assertEqual(response.status_code, 500)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("secret_key", payload["message"])
+
+
+class SecretKeyResolutionTests(unittest.TestCase):
+    def test_resolve_secret_key_prefers_environment_variable(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_global.return_value = "config-secret"
+
+        with patch.dict("os.environ", {"SCANEXPRESS_SECRET_KEY": "env-secret"}, clear=False), patch(
+            "app.get_config_manager", return_value=fake_config_manager
+        ):
+            secret_key = scan_app._resolve_secret_key()
+
+        self.assertEqual(secret_key, "env-secret")
+
+    def test_resolve_secret_key_uses_config_when_env_missing(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_global.return_value = "config-secret"
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "app.get_config_manager", return_value=fake_config_manager
+        ):
+            secret_key = scan_app._resolve_secret_key()
+
+        self.assertEqual(secret_key, "config-secret")
+
+    def test_resolve_secret_key_uses_dev_fallback_when_missing(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_global.return_value = None
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "app.get_config_manager", return_value=fake_config_manager
+        ):
+            secret_key = scan_app._resolve_secret_key()
+
+        self.assertEqual(secret_key, "scanexpress-dev-secret")
+
+
+class StartupValidationTests(unittest.TestCase):
+    def test_validate_startup_configuration_allows_login_mode_with_secret_key(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = "config-secret"
+
+        scan_app._validate_startup_configuration(fake_config_manager)
+
+    def test_validate_startup_configuration_raises_when_default_user_and_secret_missing(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = None
+        fake_config_manager.get_global.return_value = None
+
+        with self.assertRaises(RuntimeError) as context:
+            scan_app._validate_startup_configuration(fake_config_manager)
+
+        self.assertIn("secret_key", str(context.exception))
+
+    def test_validate_startup_configuration_accepts_configured_default_user(self):
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = "alice"
+
+        scan_app._validate_startup_configuration(fake_config_manager)
+
+
 class ApiScanLockTests(unittest.TestCase):
     def setUp(self):
         scan_app.app.config["TESTING"] = True
@@ -870,7 +1152,7 @@ class ApiScanLockTests(unittest.TestCase):
     @patch("app._process_scan")
     def test_post_scan_rejects_when_same_device_is_already_scanning(self, mock_process_scan):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.list_user_devices.return_value = ["brother-bw"]
         fake_config_manager.get_device_id.return_value = "scanner-bw"
 
@@ -892,7 +1174,7 @@ class ApiScanLockTests(unittest.TestCase):
 
     def test_get_scan_status_reports_device_in_progress(self):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.list_user_devices.return_value = ["brother-bw"]
         fake_config_manager.get_device_id.return_value = "scanner-bw"
 
@@ -916,7 +1198,7 @@ class ApiScanLockTests(unittest.TestCase):
     @patch("app._process_scan")
     def test_post_scan_stream_rejects_when_same_device_is_already_scanning(self, mock_process_scan):
         fake_config_manager = Mock()
-        fake_config_manager.get_current_user.return_value = "alice"
+        fake_config_manager.get_default_user.return_value = "alice"
         fake_config_manager.list_user_devices.return_value = ["brother-bw"]
         fake_config_manager.get_device_id.return_value = "scanner-bw"
 

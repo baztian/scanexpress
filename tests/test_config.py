@@ -18,7 +18,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -41,7 +41,7 @@ class ConfigManagerTests(unittest.TestCase):
             user_config_dir = Path(temp_home) / ".config" / "scanexpress"
             user_config_dir.mkdir(parents=True, exist_ok=True)
             user_config_path = user_config_dir / "scanexpress.conf"
-            user_config_path.write_text("[global]\ncurrent_user = alice\n", encoding="utf-8")
+            user_config_path.write_text("[global]\ndefault_user = alice\n", encoding="utf-8")
 
             with unittest.mock.patch.dict("os.environ", {"HOME": temp_home}, clear=True):
                 manager = ConfigManager()
@@ -51,7 +51,7 @@ class ConfigManagerTests(unittest.TestCase):
     def test_env_config_path_override_takes_precedence(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             override_path = Path(temp_dir) / "custom.conf"
-            override_path.write_text("[global]\ncurrent_user = alice\n", encoding="utf-8")
+            override_path.write_text("[global]\ndefault_user = alice\n", encoding="utf-8")
 
             with unittest.mock.patch.dict(
                 "os.environ", {"SCANEXPRESS_CONFIG_FILE": str(override_path)}, clear=True
@@ -64,7 +64,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             """
@@ -80,7 +80,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
             filename_template = inbox_{base62_id}
 
             [user:alice]
@@ -96,7 +96,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -111,7 +111,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -138,7 +138,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -160,7 +160,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -182,11 +182,11 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(device["scan_timeout_seconds"], "30")
         self.assertEqual(device["resolution"], "300")
 
-    def test_get_current_user_reads_global_current_user(self):
+    def test_get_current_user_reads_global_default_user(self):
         config_path = self._write_config(
             """
             [global]
-            current_user = bob
+            default_user = bob
 
             [user:alice]
             paperless_api_token = token-alice
@@ -198,7 +198,7 @@ class ConfigManagerTests(unittest.TestCase):
         manager = ConfigManager(config_path)
         self.assertEqual(manager.get_current_user(), "bob")
 
-    def test_get_current_user_requires_global_current_user(self):
+    def test_get_current_user_requires_global_default_user(self):
         config_path = self._write_config(
             """
             [user:alice]
@@ -213,13 +213,13 @@ class ConfigManagerTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as context:
             manager.get_current_user()
 
-        self.assertIn("global.current_user", str(context.exception))
+        self.assertIn("global.default_user", str(context.exception))
 
     def test_get_current_user_must_exist_in_configured_users(self):
         config_path = self._write_config(
             """
             [global]
-            current_user = charlie
+            default_user = charlie
 
             [user:alice]
             paperless_api_token = token-alice
@@ -239,7 +239,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -262,7 +262,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -283,7 +283,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -297,7 +297,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -319,7 +319,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -351,7 +351,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -381,7 +381,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -418,7 +418,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -440,7 +440,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
             paperless_base_url = https://paperless.example.com
 
             [user:alice]
@@ -455,7 +455,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -475,7 +475,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -495,7 +495,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice
@@ -517,7 +517,7 @@ class ConfigManagerTests(unittest.TestCase):
         config_path = self._write_config(
             """
             [global]
-            current_user = alice
+            default_user = alice
 
             [user:alice]
             paperless_api_token = token-alice

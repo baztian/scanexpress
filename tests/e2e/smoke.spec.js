@@ -66,6 +66,28 @@ test("loads page with idle state", async ({ page }) => {
   await expect(page.locator("#statusText")).toHaveText("Status: idle");
 });
 
+test("shows username in header and exposes logout action", async ({ page }) => {
+  let logoutCalled = false;
+
+  await page.route("**/auth/logout", async (route) => {
+    logoutCalled = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ status: "ok" }),
+    });
+  });
+
+  await page.goto("/");
+
+  await expect(page.locator("#headerUsername")).toHaveText("e2e");
+  const logoutButton = page.getByRole("button", { name: "Log out" });
+  await expect(logoutButton).toBeVisible();
+  await logoutButton.click();
+
+  await expect.poll(() => logoutCalled).toBeTruthy();
+});
+
 test("filename input click does not auto-select full content", async ({ page }) => {
   await page.goto("/");
 

@@ -9,6 +9,8 @@ const deviceDetailsSummary = document.getElementById("deviceDetailsSummary");
 const deviceDetails = document.getElementById("deviceDetails");
 const recentUploadsBody = document.getElementById("recentUploadsBody");
 const filenameInput = document.getElementById("filenameInput");
+const headerUsername = document.getElementById("headerUsername");
+const logoutButton = document.getElementById("logoutButton");
 const queryParams = new URLSearchParams(window.location.search);
 const isDemoMode = queryParams.get("demo") === "1";
 let deviceMap = new Map();
@@ -102,6 +104,46 @@ function setFilenameInputValue(filenameBase) {
     : generateDefaultFilenameBase();
   filenameInput.value = nextValue;
   setFilenameInputError(false);
+}
+
+function renderHeaderAccount(username) {
+  if (!headerUsername) {
+    return;
+  }
+
+  const normalizedUsername = typeof username === "string" && username.trim()
+    ? username.trim()
+    : "Unknown user";
+  headerUsername.textContent = normalizedUsername;
+}
+
+function clearUiForLoggedOutState() {
+  renderHeaderAccount("Unknown user");
+  selectedDeviceName = null;
+  selectedDeviceBusy = false;
+  activeScanDeviceName = null;
+  localScanPhaseActive = false;
+  completionFlashDeviceName = null;
+  clearTimeoutCountdownState();
+
+  for (const [taskId] of paperlessPollTimers.entries()) {
+    stopTaskPolling(taskId);
+  }
+  recentPaperlessTasks.splice(0, recentPaperlessTasks.length);
+  renderRecentUploads();
+
+  if (deviceMap instanceof Map) {
+    deviceMap.clear();
+  }
+  if (deviceRadioGroups) {
+    deviceRadioGroups.innerHTML = "";
+  }
+  if (deviceConfigFieldset) {
+    deviceConfigFieldset.disabled = true;
+  }
+  renderDeviceDetails(null);
+  updateScanButtonState();
+  setStatus("logged_out", "logged out");
 }
 
 function normalizeFilenameBaseInput(rawValue) {
@@ -883,10 +925,36 @@ function applyDeviceConfigurations(payload) {
   if (!hasSelectedDevice) {
     selectedDeviceName = devices[0]?.device_name ?? null;
   }
+
+  renderHeaderAccount(payload?.username);
   setFilenameInputValue(payload?.default_filename_base);
   renderDeviceRadioGroups(devices, selectedDeviceName);
   renderDeviceDetails(deviceMap.get(selectedDeviceName) ?? null);
   updateScanButtonState();
+}
+
+async function triggerLogout() {
+  if (!logoutButton) {
+    return;
+  }
+
+  logoutButton.disabled = true;
+  try {
+    const response = await fetch("/auth/logout", { method: "POST" });
+    if (!response.ok) {
+      setStatus("error", "logout failed");
+      return;
+    }
+
+    clearUiForLoggedOutState();
+    window.setTimeout(() => {
+      window.location.reload();
+    }, 120);
+  } catch (_error) {
+    setStatus("error", "error contacting backend");
+  } finally {
+    logoutButton.disabled = false;
+  }
 }
 
 function loadDemoData() {
@@ -1220,6 +1288,12 @@ initializeFilenameInputInteractions();
 
 if (scanButton) {
   scanButton.addEventListener("click", triggerScan);
+}
+
+if (logoutButton) {
+  logoutButton.addEventListener("click", () => {
+    void triggerLogout();
+  });
 }
 
 if (deviceRadioGroups) {

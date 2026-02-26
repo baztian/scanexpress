@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import re
 import select
@@ -7,11 +8,13 @@ import subprocess
 import tempfile
 import threading
 import time
+from functools import wraps
 from queue import Queue
 from pathlib import Path
 
 import requests
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, jsonify, render_template, request, session, stream_with_context
+from flask_login import LoginManager, UserMixin, current_user, login_user, logout_user
 from config import ConfigManager
 
 try:
@@ -33,6 +36,17 @@ _DEFAULT_FILENAME_TEMPLATE = "scan_{scan_uuid}"
 _MAX_RECENT_UPLOADS = 10
 _RECENT_UPLOADS_LOCK = threading.Lock()
 _RECENT_UPLOADS_BY_USER: dict[str, list[dict[str, object | None]]] = {}
+_DEFAULT_AUTH_REALM = "ScanExpress"
+_BASIC_AUTH_SUPPRESSED_SESSION_KEY = "basic_auth_suppressed"
+
+
+class ScanExpressUser(UserMixin):
+    def __init__(self, username: str):
+        self.id = username
+
+
+_LOGIN_MANAGER = LoginManager()
+_LOGIN_MANAGER.init_app(app)
 
 
 class ScanInProgressError(RuntimeError):
@@ -165,6 +179,143 @@ def get_config_manager() -> ConfigManager:
     if _CONFIG_MANAGER is None:
         _CONFIG_MANAGER = ConfigManager()
     return _CONFIG_MANAGER
+
+
+def _resolve_secret_key() -> str:
+    configured_env_secret = os.getenv("SCANEXPRESS_SECRET_KEY", "").strip()
+    if configured_env_secret != "":
+        return configured_env_secret
+
+    try:
+        config_manager = get_config_manager()
+        configured_secret = config_manager.get_global("secret_key")
+    except RuntimeError:
+        configured_secret = None
+
+    if isinstance(configured_secret, str) and configured_secret.strip() != "":
+        return configured_secret.strip()
+
+    return "scanexpress-dev-secret"
+
+
+def _has_configured_secret_key(config_manager: ConfigManager | None = None) -> bool:
+    configured_env_secret = os.getenv("SCANEXPRESS_SECRET_KEY", "").strip()
+    if configured_env_secret != "":
+        return True
+
+    manager = config_manager or get_config_manager()
+    try:
+        configured_secret = manager.get_global("secret_key")
+    except RuntimeError:
+        return False
+
+    return isinstance(configured_secret, str) and configured_secret.strip() != ""
+
+
+def _validate_startup_configuration(config_manager: ConfigManager | None = None) -> None:
+    manager = config_manager or get_config_manager()
+    default_user = _resolve_default_user(manager)
+    if default_user is None and not _has_configured_secret_key(manager):
+        raise RuntimeError(
+            "ScanExpress is not configured properly: set [global].secret_key "
+            "or SCANEXPRESS_SECRET_KEY when global.default_user is not set."
+        )
+
+
+app.secret_key = _resolve_secret_key()
+
+
+def _resolve_auth_realm() -> str:
+    configured_realm = session.get("auth_realm")
+    if isinstance(configured_realm, str) and configured_realm.strip() != "":
+        return configured_realm.strip()
+    return _DEFAULT_AUTH_REALM
+
+
+def _build_unauthorized_response(message: str = "Authentication required."):
+    response = jsonify({"status": "error", "message": message})
+    response.headers["WWW-Authenticate"] = f'Basic realm="{_resolve_auth_realm()}"'
+    return response, 401
+
+
+def _resolve_default_user(config_manager: ConfigManager) -> str | None:
+    configured_default_user = config_manager.get_default_user()
+    if isinstance(configured_default_user, str) and configured_default_user.strip() != "":
+        return configured_default_user
+    return None
+
+
+@_LOGIN_MANAGER.user_loader
+def _load_user(user_id: str):
+    if not isinstance(user_id, str) or user_id.strip() == "":
+        return None
+
+    try:
+        config_manager = get_config_manager()
+        if not config_manager.user_exists(user_id):
+            return None
+    except RuntimeError:
+        return None
+
+    return ScanExpressUser(user_id)
+
+
+def _resolve_request_username() -> str:
+    config_manager = get_config_manager()
+    default_user = _resolve_default_user(config_manager)
+    if default_user is not None:
+        return default_user
+
+    if current_user.is_authenticated:
+        return str(current_user.get_id())
+
+    raise RuntimeError("Authentication required.")
+
+
+def _try_login_from_basic_auth(config_manager: ConfigManager) -> bool:
+    if session.get(_BASIC_AUTH_SUPPRESSED_SESSION_KEY) is True:
+        auth = request.authorization
+        if auth is not None and auth.type is not None and auth.type.lower() == "basic":
+            session[_BASIC_AUTH_SUPPRESSED_SESSION_KEY] = False
+        return False
+
+    auth = request.authorization
+    if auth is None or auth.type is None or auth.type.lower() != "basic":
+        return False
+
+    username = (auth.username or "").strip()
+    password = auth.password or ""
+    if username == "":
+        return False
+
+    if not config_manager.verify_user_password(username, password):
+        return False
+
+    login_user(ScanExpressUser(username))
+    session[_BASIC_AUTH_SUPPRESSED_SESSION_KEY] = False
+    return True
+
+
+def _auth_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        try:
+            config_manager = get_config_manager()
+            default_user = _resolve_default_user(config_manager)
+        except RuntimeError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 500
+
+        if default_user is None and not current_user.is_authenticated:
+            if not _try_login_from_basic_auth(config_manager):
+                return _build_unauthorized_response()
+
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def _render_configuration_error_page(message: str, status_code: int = 500):
+    return render_template("configuration_error.html", message=message), status_code
 
 
 def _encode_base62(value: int) -> str:
@@ -344,7 +495,7 @@ def _resolve_scan_lock_device_id(
         return configured_device_id
 
     fallback_device_name = device_name if device_name is not None else "__default__"
-    return f"{username}:{fallback_device_name}"
+    return f"__device_name__:{fallback_device_name}"
 
 
 def _acquire_device_scan_lock(device_lock_id: str, username: str, device_name: str | None) -> None:
@@ -366,20 +517,23 @@ def _release_device_scan_lock(device_lock_id: str) -> None:
         _ACTIVE_DEVICE_SCANS.pop(device_lock_id, None)
 
 
-def _build_scan_status_payload(requested_device_name: str | None = None) -> dict:
+def _build_scan_status_payload(
+    requested_device_name: str | None = None,
+    username: str | None = None,
+) -> dict:
     config_manager = get_config_manager()
-    username = config_manager.get_current_user()
+    active_username = username or _resolve_request_username()
     device_name = _resolve_requested_device_name(
         config_manager,
-        username,
+        active_username,
         requested_device_name,
     )
     configured_device_id, scanimage_device_name = _resolve_scan_device_details(
-        username,
+        active_username,
         device_name,
     )
     device_lock_id = _resolve_scan_lock_device_id(
-        username,
+        active_username,
         device_name,
         configured_device_id,
         scanimage_device_name,
@@ -391,7 +545,7 @@ def _build_scan_status_payload(requested_device_name: str | None = None) -> dict
     payload = {
         "status": "ok",
         "in_progress": active_scan is not None,
-        "username": username,
+        "username": active_username,
         "device_name": device_name,
         "device_id": configured_device_id,
         "scanimage_device_name": scanimage_device_name,
@@ -408,31 +562,33 @@ def _process_scan_with_device_lock(
     progress_callback=None,
     requested_device_name: str | None = None,
     filename_base: str | None = None,
+    username: str | None = None,
 ) -> dict:
     config_manager = get_config_manager()
-    username = config_manager.get_current_user()
+    active_username = username or _resolve_request_username()
     device_name = _resolve_requested_device_name(
         config_manager,
-        username,
+        active_username,
         requested_device_name,
     )
     configured_device_id, scanimage_device_name = _resolve_scan_device_details(
-        username,
+        active_username,
         device_name,
     )
     device_lock_id = _resolve_scan_lock_device_id(
-        username,
+        active_username,
         device_name,
         configured_device_id,
         scanimage_device_name,
     )
 
-    _acquire_device_scan_lock(device_lock_id, username, device_name)
+    _acquire_device_scan_lock(device_lock_id, active_username, device_name)
     try:
         return _process_scan(
             progress_callback=progress_callback,
             requested_device_name=device_name,
             filename_base=filename_base,
+            username=active_username,
         )
     finally:
         _release_device_scan_lock(device_lock_id)
@@ -462,23 +618,23 @@ def _build_device_payload(
     }
 
 
-def _build_device_configurations_payload() -> dict:
+def _build_device_configurations_payload(username: str | None = None) -> dict:
     config_manager = get_config_manager()
-    username = config_manager.get_current_user()
-    device_names = config_manager.list_user_devices(username)
-    selected_device_name = config_manager.get_active_device_name(username)
+    active_username = username or _resolve_request_username()
+    device_names = config_manager.list_user_devices(active_username)
+    selected_device_name = config_manager.get_active_device_name(active_username)
     raw_paperless_base_url = config_manager.get_paperless_base_url()
     paperless_base_url = ""
     if isinstance(raw_paperless_base_url, str):
         paperless_base_url = raw_paperless_base_url.strip().rstrip("/")
     devices = [
-        _build_device_payload(config_manager, username, device_name)
+        _build_device_payload(config_manager, active_username, device_name)
         for device_name in device_names
     ]
 
     return {
         "status": "ok",
-        "username": username,
+        "username": active_username,
         "selected_device_name": selected_device_name,
         "paperless_base_url": paperless_base_url,
         "default_filename_base": _build_default_filename_base(config_manager),
@@ -914,18 +1070,19 @@ def _process_scan(
     progress_callback=None,
     requested_device_name: str | None = None,
     filename_base: str | None = None,
+    username: str | None = None,
 ) -> dict:
     config_manager = get_config_manager()
-    username = config_manager.get_current_user()
+    active_username = username or _resolve_request_username()
     device_name = _resolve_requested_device_name(
         config_manager,
-        username,
+        active_username,
         requested_device_name,
     )
     configured_device_id, scanimage_device_name = _resolve_scan_device_details(
-        username, device_name
+        active_username, device_name
     )
-    scan_timeout_seconds = _resolve_scan_timeout_seconds(username, device_name)
+    scan_timeout_seconds = _resolve_scan_timeout_seconds(active_username, device_name)
     normalized_filename_base = _normalize_filename_base(filename_base, config_manager)
     output_filename = f"{normalized_filename_base}.pdf"
     total_started_at = time.monotonic()
@@ -949,7 +1106,7 @@ def _process_scan(
         tiff_paths = _run_scan_command(
             batch_output_pattern,
             progress_callback,
-            username,
+            active_username,
             device_name,
         )
         scan_elapsed_seconds = time.monotonic() - scan_started_at
@@ -965,7 +1122,9 @@ def _process_scan(
         page_count = _convert_tiffs_to_pdf(tiff_paths, pdf_path)
 
         if progress_callback is not None:
-            paperless_timeout_seconds = _calculate_paperless_timeout_seconds(page_count, username)
+            paperless_timeout_seconds = _calculate_paperless_timeout_seconds(
+                page_count, active_username
+            )
             progress_callback(
                 {
                     "status": "uploading",
@@ -977,7 +1136,7 @@ def _process_scan(
             )
 
         paperless_started_at = time.monotonic()
-        paperless_response = _upload_pdf_to_paperless(pdf_path, page_count, username)
+        paperless_response = _upload_pdf_to_paperless(pdf_path, page_count, active_username)
         paperless_elapsed_seconds = time.monotonic() - paperless_started_at
 
     total_elapsed_seconds = time.monotonic() - total_started_at
@@ -1008,7 +1167,7 @@ def _process_scan(
         "filename": output_filename,
         "document_id": document_id,
         "page_count": page_count,
-        "username": username,
+        "username": active_username,
         "device_name": device_name,
         "device_id": configured_device_id,
         "scanimage_device_name": scanimage_device_name,
@@ -1017,12 +1176,87 @@ def _process_scan(
     }
 
 
+@app.post("/auth/login")
+def login():
+    try:
+        config_manager = get_config_manager()
+        default_user = _resolve_default_user(config_manager)
+    except RuntimeError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+    if default_user is not None:
+        return jsonify({"status": "ok", "username": default_user}), 200
+
+    if not _has_configured_secret_key(config_manager):
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": (
+                        "ScanExpress is not configured properly: set [global].secret_key "
+                        "or SCANEXPRESS_SECRET_KEY when global.default_user is not set."
+                    ),
+                }
+            ),
+            500,
+        )
+
+    auth = request.authorization
+    if auth is None or auth.type.lower() != "basic":
+        return _build_unauthorized_response("Basic authentication credentials are required.")
+
+    username = auth.username or ""
+    password = auth.password or ""
+    if not config_manager.verify_user_password(username, password):
+        return _build_unauthorized_response("Invalid username or password.")
+
+    login_user(ScanExpressUser(username))
+    session["auth_realm"] = _DEFAULT_AUTH_REALM
+    session[_BASIC_AUTH_SUPPRESSED_SESSION_KEY] = False
+    return jsonify({"status": "ok", "username": username}), 200
+
+
+@app.post("/auth/logout")
+def logout():
+    try:
+        default_user = _resolve_default_user(get_config_manager())
+    except RuntimeError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+    if default_user is None:
+        logout_user()
+        session["auth_realm"] = f"{_DEFAULT_AUTH_REALM}-{_generate_base62_id()}"
+        session[_BASIC_AUTH_SUPPRESSED_SESSION_KEY] = True
+    return jsonify({"status": "ok"}), 200
+
+
 @app.get("/")
 def index():
-    return render_template("index.html")
+    try:
+        config_manager = get_config_manager()
+        default_user = _resolve_default_user(config_manager)
+    except RuntimeError as exc:
+        return _render_configuration_error_page(str(exc), 500)
+
+    if default_user is None and not current_user.is_authenticated:
+        if not _has_configured_secret_key(config_manager):
+            return _render_configuration_error_page(
+                "ScanExpress is not configured properly: set [global].secret_key "
+                "or SCANEXPRESS_SECRET_KEY when global.default_user is not set.",
+                500,
+            )
+
+        if not _try_login_from_basic_auth(config_manager):
+            return _build_unauthorized_response()
+
+    return render_template(
+        "index.html",
+        resolved_username=_resolve_request_username(),
+    )
 
 
 @app.post("/api/scan")
+@_auth_required
 def trigger_scan():
     request_json = request.get_json(silent=True) or {}
     requested_device_name = request_json.get("device_name")
@@ -1041,9 +1275,11 @@ def trigger_scan():
         return jsonify({"status": "error", "message": "Filename cannot be empty"}), 400
 
     try:
+        username = _resolve_request_username()
         scan_payload = _process_scan_with_device_lock(
             requested_device_name=requested_device_name,
             filename_base=filename_base,
+            username=username,
         )
         _register_recent_upload_from_scan_payload(scan_payload)
         return (
@@ -1054,11 +1290,13 @@ def trigger_scan():
         return jsonify({"status": "busy", "message": str(exc)}), 409
     except RuntimeError as exc:
         if _is_paperless_upload_failure_message(str(exc)):
-            config_manager = get_config_manager()
-            username = config_manager.get_current_user()
+            username = _resolve_request_username()
             normalized_filename_base = None
             if isinstance(filename_base, str) and filename_base.strip() != "":
-                normalized_filename_base = _normalize_filename_base(filename_base, config_manager)
+                normalized_filename_base = _normalize_filename_base(
+                    filename_base,
+                    get_config_manager(),
+                )
             output_file_name = (
                 f"{normalized_filename_base}.pdf" if normalized_filename_base is not None else None
             )
@@ -1085,6 +1323,7 @@ def trigger_scan():
 
 
 @app.post("/api/scan/stream")
+@_auth_required
 def trigger_scan_stream():
     request_json = request.get_json(silent=True) or {}
     requested_device_name = request_json.get("device_name")
@@ -1103,7 +1342,7 @@ def trigger_scan_stream():
         return jsonify({"status": "error", "message": "Filename cannot be empty"}), 400
 
     config_manager = get_config_manager()
-    username = config_manager.get_current_user()
+    username = _resolve_request_username()
     try:
         device_name = _resolve_requested_device_name(
             config_manager,
@@ -1149,6 +1388,7 @@ def trigger_scan_stream():
                     send_progress,
                     requested_device_name=device_name,
                     filename_base=filename_base,
+                    username=username,
                 )
                 _register_recent_upload_from_scan_payload(result)
                 updates_queue.put({**result, "complete": True})
@@ -1202,9 +1442,10 @@ def trigger_scan_stream():
 
 
 @app.get("/api/device-configurations")
+@_auth_required
 def list_device_configurations():
     try:
-        return jsonify(_build_device_configurations_payload()), 200
+        return jsonify(_build_device_configurations_payload(username=_resolve_request_username())), 200
     except RuntimeError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 500
     except Exception:
@@ -1221,6 +1462,7 @@ def list_device_configurations():
 
 
 @app.get("/api/scan/status")
+@_auth_required
 def get_scan_status():
     requested_device_name = request.args.get("device_name")
     if requested_device_name is not None and not isinstance(requested_device_name, str):
@@ -1230,7 +1472,12 @@ def get_scan_status():
         )
 
     try:
-        return jsonify(_build_scan_status_payload(requested_device_name)), 200
+        return jsonify(
+            _build_scan_status_payload(
+                requested_device_name,
+                username=_resolve_request_username(),
+            )
+        ), 200
     except RuntimeError as exc:
         if "not configured for user" in str(exc):
             return jsonify({"status": "error", "message": str(exc)}), 400
@@ -1249,10 +1496,10 @@ def get_scan_status():
 
 
 @app.get("/api/recent-uploads")
+@_auth_required
 def get_recent_uploads():
     try:
-        config_manager = get_config_manager()
-        username = config_manager.get_current_user()
+        username = _resolve_request_username()
         return (
             jsonify(
                 {
@@ -1279,13 +1526,13 @@ def get_recent_uploads():
 
 
 @app.get("/api/paperless/tasks/<task_id>")
+@_auth_required
 def get_paperless_task_status(task_id: str):
     if task_id.strip() == "":
         return jsonify({"status": "error", "message": "task_id is required."}), 400
 
     try:
-        config_manager = get_config_manager()
-        username = config_manager.get_current_user()
+        username = _resolve_request_username()
         payload = _fetch_paperless_task_status(task_id, username)
         task_status = payload.get("task_status")
         is_terminal = task_status in {"SUCCESS", "FAILURE"}
@@ -1321,4 +1568,10 @@ def get_paperless_task_status(task_id: str):
 
 
 if __name__ == "__main__":
+    try:
+        _validate_startup_configuration()
+    except RuntimeError as exc:
+        app.logger.error("Startup configuration error: %s", exc)
+        raise SystemExit(1) from exc
+
     app.run(host="0.0.0.0", port=8000, debug=True)

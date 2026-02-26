@@ -12,6 +12,7 @@
 
 ### API Notes
 
+- `GET /`: renders the main UI only when `global.default_user` is configured (or an authenticated session exists); otherwise renders a configuration error page (no browser auth prompt).
 - `POST /api/scan`: synchronous JSON response (compatible with scripts and curl).
 - `POST /api/scan/stream`: streaming NDJSON progress updates for live UI status during scanning.
 - Successful responses include `username`, selected template `device_name`, configured `device_id`, and runtime `scanimage_device_name` (the value passed to scanner `-d`) for traceability.
