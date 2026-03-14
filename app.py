@@ -807,6 +807,16 @@ def _convert_tiffs_to_pdf(input_tiff_paths: list[Path], output_pdf_path: Path) -
             "PIL is not installed. Install Pillow via pip or install python3-pil and run with system site-packages."
         )
 
+    tiff_sizes_kb = [
+        f"{input_tiff_path.name}({input_tiff_path.stat().st_size // 1024}KB)"
+        for input_tiff_path in input_tiff_paths
+    ]
+    app.logger.info(
+        "PDF conversion starting: %d TIFF file(s): %s",
+        len(input_tiff_paths),
+        ", ".join(tiff_sizes_kb),
+    )
+
     try:
         converted_frames = []
         for input_tiff_path in input_tiff_paths:
@@ -825,6 +835,12 @@ def _convert_tiffs_to_pdf(input_tiff_paths: list[Path], output_pdf_path: Path) -
     if not converted_frames:
         raise RuntimeError("TIFF output contains no pages.")
 
+    app.logger.info(
+        "PDF conversion writing: %d page(s), target=%s",
+        len(converted_frames),
+        output_pdf_path.name,
+    )
+
     first_page, *remaining_pages = converted_frames
     try:
         first_page.save(
@@ -833,11 +849,17 @@ def _convert_tiffs_to_pdf(input_tiff_paths: list[Path], output_pdf_path: Path) -
             save_all=True,
             append_images=remaining_pages,
         )
-    except OSError as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to convert TIFF to PDF: {exc}") from exc
 
     if not output_pdf_path.exists() or output_pdf_path.stat().st_size == 0:
         raise RuntimeError("Generated PDF is empty.")
+
+    app.logger.info(
+        "PDF conversion complete: pages=%d output_size=%dKB",
+        len(converted_frames),
+        output_pdf_path.stat().st_size // 1024,
+    )
 
     return len(converted_frames)
 
@@ -1005,7 +1027,18 @@ def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | No
         raise RuntimeError(f"No paperless API token configured for user '{username}' in config.ini.")
 
     upload_url = _build_paperless_upload_url(username)
-    upload_timeout_seconds = _calculate_paperless_timeout_seconds(page_count, username)
+    page_based_timeout_seconds = _calculate_paperless_timeout_seconds(page_count, username)
+    pdf_size_bytes = pdf_path.stat().st_size
+    size_based_timeout_seconds = max((pdf_size_bytes // (1024 * 1024)) + 30, 30)
+    upload_timeout_seconds = max(page_based_timeout_seconds, size_based_timeout_seconds)
+
+    app.logger.info(
+        "Paperless upload starting: file=%s size=%dKB pages=%d timeout=%ds",
+        pdf_path.name,
+        pdf_size_bytes // 1024,
+        page_count,
+        upload_timeout_seconds,
+    )
 
     headers = {"Authorization": f"Token {api_token}"}
 
@@ -1020,6 +1053,12 @@ def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | No
                     timeout=upload_timeout_seconds,
                 )
         except requests.RequestException as exc:
+            app.logger.warning(
+                "Paperless upload attempt %d/%d failed: %s",
+                attempt,
+                _PAPERLESS_UPLOAD_MAX_ATTEMPTS,
+                exc,
+            )
             if attempt >= _PAPERLESS_UPLOAD_MAX_ATTEMPTS:
                 raise RuntimeError(
                     f"Paperless upload request failed: {exc}"
@@ -1040,6 +1079,12 @@ def _upload_pdf_to_paperless(pdf_path: Path, page_count: int, username: str | No
                 response.status_code in _PAPERLESS_RETRYABLE_STATUS_CODES
                 and attempt < _PAPERLESS_UPLOAD_MAX_ATTEMPTS
             ):
+                app.logger.warning(
+                    "Paperless upload attempt %d/%d returned retryable status %d",
+                    attempt,
+                    _PAPERLESS_UPLOAD_MAX_ATTEMPTS,
+                    response.status_code,
+                )
                 retry_delay_seconds = _PAPERLESS_UPLOAD_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
                 time.sleep(retry_delay_seconds)
                 continue
@@ -1290,6 +1335,7 @@ def trigger_scan():
     except ScanInProgressError as exc:
         return jsonify({"status": "busy", "message": str(exc)}), 409
     except RuntimeError as exc:
+        app.logger.error("Scan failed (/api/scan): %s", exc)
         if _is_paperless_upload_failure_message(str(exc)):
             username = _resolve_request_username()
             normalized_filename_base = None
@@ -1402,6 +1448,7 @@ def trigger_scan_stream():
                     }
                 )
             except RuntimeError as exc:
+                app.logger.error("Scan stream worker failed: %s", exc)
                 output_file_name = None
                 if isinstance(filename_base, str) and filename_base.strip() != "":
                     output_file_name = f"{_normalize_filename_base(filename_base, config_manager)}.pdf"

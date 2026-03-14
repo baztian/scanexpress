@@ -870,7 +870,11 @@ class ApiDeviceConfigurationTests(unittest.TestCase):
         self.assertIn("not configured", payload["message"])
 
     def test_post_scan_rejects_non_string_filename_base(self):
-        response = self.client.post("/api/scan", json={"filename_base": 123})
+        fake_config_manager = Mock()
+        fake_config_manager.get_default_user.return_value = "alice"
+
+        with patch("app.get_config_manager", return_value=fake_config_manager):
+            response = self.client.post("/api/scan", json={"filename_base": 123})
 
         self.assertEqual(response.status_code, 400)
         payload = response.get_json()
