@@ -196,6 +196,36 @@ class BatchScanCommandTests(unittest.TestCase):
     @patch("app.time.monotonic")
     @patch("app.select.select")
     @patch("app.subprocess.Popen")
+    def test_run_scan_command_ignores_empty_batch_output_when_non_empty_exists(
+        self, mock_popen, mock_select, mock_monotonic
+    ):
+        mock_monotonic.side_effect = [0, 1, 2, 3, 4]
+        process = FakeProcess(
+            stderr_lines=[
+                "Scanning page 1\n",
+                "Scanned page 1. (scanner status = 5)\n",
+                "Batch terminated, 1 pages scanned\n",
+            ],
+            returncode=0,
+        )
+        mock_popen.return_value = process
+        mock_select.side_effect = lambda streams, _w, _x, _timeout: (
+            (streams, [], []) if not process.is_complete else (streams, [], [])
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "scan_output1.tiff").write_bytes(b"valid")
+            (temp_path / "scan_output2.tiff").write_bytes(b"")
+            (temp_path / "scan_output3.tiff").write_bytes(b"")
+
+            result_paths = scan_app._run_scan_command(temp_path / "scan_output%d.tiff")
+
+        self.assertEqual([path.name for path in result_paths], ["scan_output1.tiff"])
+
+    @patch("app.time.monotonic")
+    @patch("app.select.select")
+    @patch("app.subprocess.Popen")
     def test_run_scan_command_applies_per_page_progress_timeout(
         self, mock_popen, mock_select, mock_monotonic
     ):
@@ -1298,6 +1328,71 @@ class BatchTiffConversionTests(unittest.TestCase):
             self.assertEqual(page_count, 3)
             self.assertTrue(output_pdf_path.exists())
             self.assertGreater(output_pdf_path.stat().st_size, 0)
+            self.assertTrue(all(not tiff_path.exists() for tiff_path in tiff_paths))
+
+    def test_convert_tiffs_to_pdf_appends_pages_incrementally(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            tiff_paths = [temp_path / "scan_output1.tiff", temp_path / "scan_output2.tiff"]
+            for path in tiff_paths:
+                path.write_bytes(b"fake-tiff")
+
+            output_pdf_path = temp_path / "scan_output.pdf"
+            save_calls = []
+            close_calls = 0
+
+            class FakeConvertedPage:
+                def save(self, destination_path, format=None, save_all=None, **kwargs):
+                    save_calls.append(
+                        {
+                            "destination": Path(destination_path),
+                            "format": format,
+                            "save_all": save_all,
+                            "kwargs": kwargs,
+                        }
+                    )
+                    mode = "ab" if kwargs.get("append") else "wb"
+                    with open(destination_path, mode) as pdf_file:
+                        pdf_file.write(b"%PDF-page")
+
+                def close(self):
+                    nonlocal close_calls
+                    close_calls += 1
+
+            class FakeOpenedTiff:
+                n_frames = 2
+
+                def __init__(self, _path):
+                    self.frame_index = 0
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def seek(self, frame_index):
+                    self.frame_index = frame_index
+
+                def convert(self, _mode):
+                    return FakeConvertedPage()
+
+            class FakeImageModule:
+                @staticmethod
+                def open(path):
+                    return FakeOpenedTiff(path)
+
+            with patch("app.Image", FakeImageModule):
+                page_count = scan_app._convert_tiffs_to_pdf(tiff_paths, output_pdf_path)
+
+            self.assertEqual(page_count, 4)
+            self.assertEqual(len(save_calls), 4)
+            self.assertNotIn("append", save_calls[0]["kwargs"])
+            self.assertNotIn("append_images", save_calls[0]["kwargs"])
+            for save_call in save_calls[1:]:
+                self.assertEqual(save_call["kwargs"].get("append"), True)
+                self.assertNotIn("append_images", save_call["kwargs"])
+            self.assertEqual(close_calls, 4)
 
 
 class FakeProcess:

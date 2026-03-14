@@ -785,18 +785,32 @@ def _run_scan_command(
     if not output_tiff_paths:
         raise RuntimeError("Scanner produced no TIFF output.")
 
-    empty_output_files = [
-        output_tiff_path.name
+    empty_output_paths = [
+        output_tiff_path
         for output_tiff_path in output_tiff_paths
         if output_tiff_path.stat().st_size == 0
     ]
-    if empty_output_files:
+    if empty_output_paths:
+        non_empty_output_paths = [
+            output_tiff_path
+            for output_tiff_path in output_tiff_paths
+            if output_tiff_path.stat().st_size > 0
+        ]
+        empty_output_files = [output_tiff_path.name for output_tiff_path in empty_output_paths]
         empty_files_summary = ", ".join(empty_output_files[:5])
         if len(empty_output_files) > 5:
             empty_files_summary = f"{empty_files_summary}, ..."
-        raise RuntimeError(
-            f"Scanner produced empty TIFF output file(s): {empty_files_summary}."
+
+        if not non_empty_output_paths:
+            raise RuntimeError(
+                f"Scanner produced empty TIFF output file(s): {empty_files_summary}."
+            )
+
+        app.logger.warning(
+            "Ignoring empty TIFF output file(s): %s",
+            empty_files_summary,
         )
+        output_tiff_paths = non_empty_output_paths
 
     return output_tiff_paths
 
@@ -817,51 +831,71 @@ def _convert_tiffs_to_pdf(input_tiff_paths: list[Path], output_pdf_path: Path) -
         ", ".join(tiff_sizes_kb),
     )
 
+    page_count = 0
+    wrote_first_page = False
     try:
-        converted_frames = []
         for input_tiff_path in input_tiff_paths:
             with Image.open(input_tiff_path) as image:
                 frame_count = getattr(image, "n_frames", 1)
                 for frame_index in range(frame_count):
                     image.seek(frame_index)
-                    converted_frames.append(image.convert("RGB"))
+                    converted_page = image.convert("RGB")
+                    try:
+                        if not wrote_first_page:
+                            converted_page.save(
+                                output_pdf_path,
+                                format="PDF",
+                                save_all=True,
+                            )
+                            wrote_first_page = True
+                        else:
+                            converted_page.save(
+                                output_pdf_path,
+                                format="PDF",
+                                save_all=True,
+                                append=True,
+                            )
+                    finally:
+                        converted_page.close()
+                    page_count += 1
+            try:
+                input_tiff_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                app.logger.warning(
+                    "Failed to delete temporary TIFF after conversion: %s (%s)",
+                    input_tiff_path.name,
+                    exc,
+                )
     except FileNotFoundError as exc:
         raise RuntimeError("A TIFF file is missing for PDF conversion.") from exc
     except UnidentifiedImageError as exc:
         raise RuntimeError("Scanner output contains an invalid TIFF image.") from exc
     except OSError as exc:
         raise RuntimeError(f"Failed to read TIFF outputs: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to convert TIFF to PDF: {exc}") from exc
 
-    if not converted_frames:
+    if page_count == 0:
         raise RuntimeError("TIFF output contains no pages.")
 
     app.logger.info(
         "PDF conversion writing: %d page(s), target=%s",
-        len(converted_frames),
+        page_count,
         output_pdf_path.name,
     )
-
-    first_page, *remaining_pages = converted_frames
-    try:
-        first_page.save(
-            output_pdf_path,
-            format="PDF",
-            save_all=True,
-            append_images=remaining_pages,
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Failed to convert TIFF to PDF: {exc}") from exc
 
     if not output_pdf_path.exists() or output_pdf_path.stat().st_size == 0:
         raise RuntimeError("Generated PDF is empty.")
 
     app.logger.info(
         "PDF conversion complete: pages=%d output_size=%dKB",
-        len(converted_frames),
+        page_count,
         output_pdf_path.stat().st_size // 1024,
     )
 
-    return len(converted_frames)
+    return page_count
 
 
 def _build_paperless_upload_url(username: str) -> str:
