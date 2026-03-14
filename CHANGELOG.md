@@ -10,6 +10,18 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - No changes yet.
 
+## [0.0.3] - 2026-03-14
+
+### Changed
+
+- Added more detailed logging around PDF conversion, Paperless upload attempts, and scan failures.
+
+### Fixed
+
+- Reduced scan memory and disk usage by converting TIFF pages to PDF incrementally instead of loading all pages at once.
+- Temporary TIFF files are deleted after conversion, and empty scanner output pages are ignored when valid pages are present.
+- Improved Canon scanner compatibility by allowing conversion of truncated TIFF images.
+
 ## [0.0.2] - 2026-02-27
 
 ### Added
@@ -40,4 +52,5 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 [0.0.1]: https://github.com/baztian/scanexpress/releases/tag/v0.0.1
 [0.0.2]: https://github.com/baztian/scanexpress/compare/v0.0.1...v0.0.2
-[Unreleased]: https://github.com/baztian/scanexpress/compare/v0.0.2...HEAD
+[0.0.3]: https://github.com/baztian/scanexpress/compare/v0.0.2...v0.0.3
+[Unreleased]: https://github.com/baztian/scanexpress/compare/v0.0.3...HEAD
