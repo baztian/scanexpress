@@ -18,7 +18,8 @@ from flask_login import LoginManager, UserMixin, current_user, login_user, logou
 from config import ConfigManager
 
 try:
-    from PIL import Image, UnidentifiedImageError
+    from PIL import Image, ImageFile, UnidentifiedImageError
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
 except ImportError:
     Image = None
     UnidentifiedImageError = OSError
