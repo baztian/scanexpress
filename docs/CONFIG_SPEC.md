@@ -126,7 +126,7 @@ Example:
     - `single_file`: use `--output-file=<path>`
 - `scan_timeout_seconds` (optional): Timeout per page during scanning for this device (integer seconds)
 
-Note: `scanimage` does not natively accept `...:libusb:/dev/<symlink>` device identifiers. This `/dev/...` form is a ScanExpress convenience syntax.
+Note: `scanimage` does not natively accept `...:libusb:/dev/<symlink>` device identifiers. This `/dev/...` form is a ScanExpress convenience syntax. It also works with network-prefixed device identifiers, such as `net:127.0.0.1:canon_dr:libusb:/dev/canon-dr-m140`.
 
 ### Device ID Format & Stability
 
@@ -173,7 +173,9 @@ Create a udev rule to generate a persistent symlink to your scanner:
 
        device_id = BrotherADS2200:libusb:/dev/brother-scanner
 
-    This is intentionally not a standard `scanimage` device specifier. At runtime, ScanExpress resolves `/dev/brother-scanner` to `/dev/bus/usb/BBB/DDD` and invokes `scanimage -d BrotherADS2200:libusb:BBB:DDD`.
+     This is intentionally not a standard `scanimage` device specifier. At runtime, ScanExpress resolves `/dev/brother-scanner` to `/dev/bus/usb/BBB/DDD` and invokes `scanimage -d BrotherADS2200:libusb:BBB:DDD`.
+
+    Network-prefixed devices use the same symlink syntax. For example, configuring `net:127.0.0.1:canon_dr:libusb:/dev/canon-dr-m140` resolves the symlink to its USB bus and device numbers while preserving the network prefix. If it resolves to `/dev/bus/usb/001/011`, ScanExpress invokes `scanimage -d net:127.0.0.1:canon_dr:libusb:001:011`.
 
 Now your device reference is stable across unplug/replug cycles.
 
