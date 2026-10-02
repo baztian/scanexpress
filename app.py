@@ -707,6 +707,7 @@ def _run_scan_command(
     device_name: str | None = None,
 ) -> list[Path]:
     command = _build_scan_command(batch_output_pattern, username, device_name)
+    app.logger.info("Executing scan command: %s", shlex.join(command))
     scan_timeout_seconds_per_page = _resolve_scan_timeout_seconds(username, device_name)
 
     try:
